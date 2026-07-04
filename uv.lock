@@ -35,6 +35,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "instructor" },
     { name = "langchain-community" },
     { name = "langchain-openai" },
     { name = "langsmith" },
@@ -55,6 +56,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "instructor", specifier = ">=1.15.3" },
     { name = "langchain-community", specifier = ">=0.4.0,<0.4.2" },
     { name = "langchain-openai", specifier = ">=1.1.9" },
     { name = "langsmith", specifier = ">=0.8.16" },
@@ -238,6 +240,7 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "instructor" },
     { name = "langsmith" },
     { name = "openai" },
     { name = "pydantic" },
@@ -249,6 +252,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.128.0" },
+    { name = "instructor", specifier = ">=1.15.3" },
     { name = "langsmith", specifier = ">=0.8.16" },
     { name = "openai", specifier = ">=2.15.0" },
     { name = "pydantic", specifier = ">=2.12.5" },

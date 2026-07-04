@@ -11,8 +11,7 @@ COPY apps/api ./apps/api
 ENV UV_COMPILE_BYTECODE=1
 
 # Install dependencies including workspace packages
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package api
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --package api
 
 # Enable bytecode compilation and Python optimization
 ENV PYTHONOPTIMIZE=1
