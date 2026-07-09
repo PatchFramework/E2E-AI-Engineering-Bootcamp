@@ -16,6 +16,7 @@ dependencies = [
     "qdrant-client>=1.18.0",
     "uvicorn>=0.40.0",
     "instructor>=1.15.3",
+    "sentence-transformers>=5.6.0",
 ]
 
 [build-system]
