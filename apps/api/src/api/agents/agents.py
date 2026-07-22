@@ -1,3 +1,4 @@
+from langchain_core.messages import AIMessage
 from .models import *
 from .tools import *
 from api.core.config import config
@@ -65,6 +66,11 @@ def agent_node(state: State) -> dict:
     - Refer to data in context always as "available products" and never as "context"
     - Try answering queries that are not precise by broadening the search radius i.e. product categories instead of specific brand
     - When you have gathered all information and are ready to provide the final answer to the customer, you MUST call the `FinalResponse` tool with your answer and list of citations. Do NOT respond with plain text when finishing; always use the `FinalResponse` tool.
+
+    # Procedure:
+    - Before every tool call check if you have enough information to answer the question already
+    - If there is not sufficient information in context you should use tool calls to retrieve the relevant information
+    - At the end, if you have sufficient information you should call the `FinalResponse` tool with your answer and list of citations. Otherwise, you should ask the customer to rephrase their request and you were not able to find anything related to this request.
     """
     template = Template(jinja_prompt_template)
 
@@ -78,7 +84,7 @@ def agent_node(state: State) -> dict:
 
     llm_client_with_tools = llm_client.bind_tools(
         [retrieve_formatted_context, FinalResponse],
-        tool_choice="auto"
+        tool_choice="required"
     )
 
     response = llm_client_with_tools.invoke([
@@ -104,6 +110,9 @@ def agent_node(state: State) -> dict:
                 final_answer = True
                 answer = tool_call.get("args").get("answer")
                 citations.extend(tool_call.get("args").get("citations"))
+
+                # remove dangling tool calls that might cause errors
+                response = AIMessage(content=answer)
                 break
 
     return {
@@ -161,11 +170,6 @@ def intent_router_node(state: State) -> dict:
 
     template = Template(instruction)
     prompt = template.render()
-
-    messages = state.messages
-    conversation = []
-    for message in messages:
-        conversation.append(convert_to_openai_messages(message))
         
     client = instructor.from_provider(
         "openai/gpt-5.4-nano",
@@ -175,7 +179,7 @@ def intent_router_node(state: State) -> dict:
     response, raw_response = client.create_with_completion(
         messages=[
             {"role": "system", "content": prompt},
-            *conversation
+            convert_to_openai_messages(state.messages[-1])
         ],
         reasoning={"effort": "none"},
         response_model=IntentRouterResponse

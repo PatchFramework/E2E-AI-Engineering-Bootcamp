@@ -1,7 +1,14 @@
 import streamlit as st
 import requests
 from chatbot_ui.core.config import config
+import uuid
 
+def get_thread_id():
+    if "thread_id" not in st.session_state:
+        st.session_state.thread_id = str(uuid.uuid4())
+    return st.session_state.thread_id
+
+thread_id = get_thread_id()
 
 def api_call(method, url, **kwargs):
 
@@ -79,7 +86,7 @@ if prompt := st.chat_input("Hello! How can I assist you today?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.spinner("Thinking..."):
-        success, response_data = api_call("post", f"{config.API_URL}/agent", json={"query": prompt})
+        success, response_data = api_call("post", f"{config.API_URL}/agent", json={"query": prompt, "thread_id": st.session_state.thread_id})
         
         if success and isinstance(response_data, dict):
             answer_text = response_data.get("answer", "")

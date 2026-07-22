@@ -12,6 +12,19 @@ from langgraph.prebuilt import ToolNode
 from qdrant_client.http.models import MatchValue, FieldCondition, Filter
 from qdrant_client.models import VectorParams, Distance, SparseVectorParams, Modifier, PayloadSchemaType, PointStruct, Document, Prefetch, RrfQuery, Rrf
 
+# persistent conversations
+from langgraph.checkpoint.postgres import PostgresSaver
+import os
+
+#############################
+## Checkpointer Env vars ####
+#############################
+db = os.environ["MULTI_TURN_POSTGRES_DB"]
+user = os.environ["MULTI_TURN_POSTGRES_USER"]
+password = os.environ["MULTI_TURN_POSTGRES_PASSWORD"]
+HOST = "postgres"
+PORT = "5432"
+
 
 #####################################
 ## Construct Tools into tool node ###
@@ -71,32 +84,36 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("tools", "agent_node")
 
-# Compile graph
-app = workflow.compile()
-
 
 
 #####################
 ## Agent Execution ##
 #####################
-def run_agent(question: str) -> dict:
+
+def rag_agent_wrapper(question: str, thread_id: str):
+    qdrant_client = QdrantClient(url="http://qdrant:6333")
+
     initial_state = {
         "messages": [HumanMessage(content=question)],
         "iteration": 0,
     }
 
-    result = app.invoke(initial_state)
-    return result
+    config = {
+        "configurable": {
+            "thread_id": thread_id
+        }
+    }
 
+    with PostgresSaver.from_conn_string(
+        f"postgresql://{user}:{password}@{HOST}:{PORT}/{db}"
+        ) as checkpointer:
+        
+        # Compile graph with checkpointing
+        app = workflow.compile(checkpointer=checkpointer)
+        result = app.invoke(initial_state, config)
 
-
-
-def rag_agent_wrapper(question):
-    qdrant_client = QdrantClient(url="http://qdrant:6333")
-
-    result = run_agent(question)
     print("Received final result and will extract product information for:", result)
-    
+
     used_context = []
     for citation in result.get("citations", []):
         # extract the information for the cited items

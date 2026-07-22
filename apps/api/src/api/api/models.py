@@ -2,10 +2,11 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class RAGRequest(BaseModel):
+class AgentRequest(BaseModel):
     query: str
+    thread_id: str
 
-class RagUsedContext(BaseModel):
+class AgentUsedContext(BaseModel):
     description: str
     img_url: Optional[str] = None
     product_url: str
@@ -13,6 +14,6 @@ class RagUsedContext(BaseModel):
     rating_number: Optional[int] = None
     
 
-class RAGResponse(BaseModel):
+class AgentResponse(BaseModel):
     answer: str
-    citations: list[RagUsedContext]
+    citations: list[AgentUsedContext]

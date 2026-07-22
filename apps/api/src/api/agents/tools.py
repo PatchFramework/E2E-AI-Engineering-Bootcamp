@@ -1,5 +1,6 @@
 import os
-os.environ["HF_HOME"] = "/tmp/huggingface"
+os.environ["HF_HOME"] = os.getenv("HF_HOME", "/tmp/huggingface")
+os.environ["TORCH_DYNAMO_DISABLE"] = "1"
 
 from typing import List
 from langsmith import traceable, get_current_run_tree

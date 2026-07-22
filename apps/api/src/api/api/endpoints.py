@@ -1,7 +1,7 @@
-from api.api.models import RagUsedContext
+from api.api.models import AgentUsedContext
 from api.agents.graph import rag_agent_wrapper
 from fastapi import APIRouter, Request
-from api.api.models import RAGRequest, RAGResponse
+from api.api.models import AgentRequest, AgentResponse
 from api.agents.retrieval_generation import rag_pipeline
 from qdrant_client import QdrantClient
 import logging
@@ -17,14 +17,14 @@ rag_router = APIRouter()
 @rag_router.post("/")
 def chat(
     request: Request,
-    payload: RAGRequest
-) -> RAGResponse:
+    payload: AgentRequest
+) -> AgentResponse:
 
-    result = rag_agent_wrapper(payload.query)
+    result = rag_agent_wrapper(payload.query, payload.thread_id)
 
-    return RAGResponse(
+    return AgentResponse(
         answer=result["answer"], 
-        citations=[RagUsedContext(**context) for context in result["used_context"]])
+        citations=[AgentUsedContext(**context) for context in result["used_context"]])
 
 
 api_router = APIRouter()

@@ -19,6 +19,8 @@ services:
       - 8000:8000
     env_file:
       - .env
+    environment:
+      - TORCH_DYNAMO_DISABLE=1
     restart: unless-stopped
     volumes:
       - ./apps/api/src:/app/apps/api/src
@@ -31,3 +33,16 @@ services:
     volumes:
       - ./qdrant_data:/qdrant/storage:z
     restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: ${MULTI_TURN_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${MULTI_TURN_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${MULTI_TURN_POSTGRES_DB}
+      PGDATA: ${MULTI_TURN_PGDATA}
+    restart: unless-stopped
+    volumes:
+      - ./postgres_data:${MULTI_TURN_PGDATA}
