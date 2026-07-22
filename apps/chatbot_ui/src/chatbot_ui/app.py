@@ -79,7 +79,7 @@ if prompt := st.chat_input("Hello! How can I assist you today?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.spinner("Thinking..."):
-        success, response_data = api_call("post", f"{config.API_URL}/rag", json={"query": prompt})
+        success, response_data = api_call("post", f"{config.API_URL}/agent", json={"query": prompt})
         
         if success and isinstance(response_data, dict):
             answer_text = response_data.get("answer", "")
