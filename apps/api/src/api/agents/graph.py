@@ -161,7 +161,8 @@ def rag_agent_wrapper(question: str, thread_id: str):
                 )
             
     return {
-        "answer": result["answer"],
-        "used_context": used_context
+        "answer": result.get("answer", ""),
+        "used_context": used_context,
+        "trace_id": result.get("trace_id", "")
     }
 

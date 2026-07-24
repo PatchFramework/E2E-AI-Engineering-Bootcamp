@@ -17,6 +17,7 @@ class State(BaseModel):
     answer: str = ""
     final_answer: bool = False
     question_relevant: bool = False
+    trace_id: str = ""
 
 
 class IntentRouterResponse(BaseModel):

@@ -83,7 +83,7 @@ def agent_node(state: State) -> dict:
     )
 
     llm_client_with_tools = llm_client.bind_tools(
-        [retrieve_formatted_context, FinalResponse],
+        [*TOOLS, FinalResponse],
         tool_choice="required"
     )
 
@@ -187,13 +187,19 @@ def intent_router_node(state: State) -> dict:
 
     current_run = get_current_run_tree()
     if current_run:
+        # additional metadata for token consumption to calculate costs
         current_run.metadata["usage_metadata"] = {
             "input_tokens": raw_response.usage.input_tokens,
             "output_tokens": raw_response.usage.output_tokens,
             "total_tokens": raw_response.usage.total_tokens
         }
+        # extract the trace id to associate it with feedback
+        trace_id = str(current_run.trace_id)
+    else:
+        trace_id = ""
 
     return {
         "question_relevant": response.question_relevant,
-        "answer": response.answer
+        "answer": response.answer,
+        "trace_id": trace_id
     }

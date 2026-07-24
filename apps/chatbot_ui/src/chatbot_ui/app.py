@@ -43,10 +43,83 @@ def api_call(method, url, **kwargs):
         return False, {"message": str(e)}
 
 
+def handle_dialog_dismiss():
+    trace_id = st.session_state.get("show_dialog")
+    if trace_id and trace_id not in st.session_state.feedback_submitted:
+        score = st.session_state.get(f"score_{trace_id}")
+        comments = st.session_state.get(f"comments_input_{trace_id}", "")
+        # Submit the comprehensive feedback to the API
+        success, response_data = api_call(
+            "post",
+            f"{config.API_URL}/feedback",
+            json={
+                "trace_id": trace_id,
+                "feedback_score": score,
+                "feedback_text": comments or "",
+                "feedback_source_type": "api"
+            }
+        )
+        if success:
+            st.session_state.feedback_submitted[trace_id] = response_data.get("message", "Thanks for your feedback!")
+        else:
+            st.session_state.feedback_submitted[trace_id] = "Feedback submitted!"
+    st.session_state.show_dialog = None
+
+
+@st.dialog("Provide additional feedback", on_dismiss=handle_dialog_dismiss)
+def show_comments_dialog(trace_id):
+    st.write("Thank you for rating! Do you have any additional comments?")
+    comments = st.text_input("Optional comments:", placeholder="Tell us more...", key=f"comments_input_{trace_id}")
+    
+    score = st.session_state.get(f"score_{trace_id}")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Submit", key=f"comments_submit_{trace_id}"):
+            success, response_data = api_call(
+                "post",
+                f"{config.API_URL}/feedback",
+                json={
+                    "trace_id": trace_id,
+                    "feedback_score": score,
+                    "feedback_text": comments or "",
+                    "feedback_source_type": "api"
+                }
+            )
+            if success:
+                st.session_state.feedback_submitted[trace_id] = response_data.get("message", "Thanks for your feedback!")
+            else:
+                st.error(response_data.get("message", "Failed to submit comments."))
+            st.session_state.show_dialog = None
+            st.rerun()
+    with col2:
+        if st.button("No thanks", key=f"comments_cancel_{trace_id}"):
+            success, response_data = api_call(
+                "post",
+                f"{config.API_URL}/feedback",
+                json={
+                    "trace_id": trace_id,
+                    "feedback_score": score,
+                    "feedback_text": "",
+                    "feedback_source_type": "api"
+                }
+            )
+            if success:
+                st.session_state.feedback_submitted[trace_id] = response_data.get("message", "Thanks for your feedback!")
+            else:
+                st.error(response_data.get("message", "Failed to submit feedback."))
+            st.session_state.show_dialog = None
+            st.rerun()
+
+
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I assist you today?"}]
 if "citations" not in st.session_state:
     st.session_state.citations = []
+if "feedback_submitted" not in st.session_state:
+    st.session_state.feedback_submitted = {}
+if "show_dialog" not in st.session_state:
+    st.session_state.show_dialog = None
 
 
 # Sidebar for Citations
@@ -77,25 +150,52 @@ with st.sidebar:
             st.markdown("---")
 
 
-for message in st.session_state.messages:
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        
+        # Check if this is the last message, it's from the assistant, and it has a trace_id
+        if (
+            idx == len(st.session_state.messages) - 1
+            and message["role"] == "assistant"
+            and message.get("trace_id")
+        ):
+            trace_id = message["trace_id"]
+            if trace_id in st.session_state.feedback_submitted:
+                st.success(st.session_state.feedback_submitted[trace_id])
+            else:
+                st.write("Was this response helpful?")
+                score = st.feedback("thumbs", key=f"score_{trace_id}")
+                if score is not None:
+                    # Defer API submission until dialog is handled
+                    st.session_state.show_dialog = trace_id
+                    st.rerun()
 
 
 if prompt := st.chat_input("Hello! How can I assist you today?"):
+    st.session_state.show_dialog = None
     st.session_state.messages.append({"role": "user", "content": prompt})
     
     with st.spinner("Thinking..."):
         success, response_data = api_call("post", f"{config.API_URL}/agent", json={"query": prompt, "thread_id": st.session_state.thread_id})
         
+        trace_id = None
         if success and isinstance(response_data, dict):
             answer_text = response_data.get("answer", "")
             citations = response_data.get("citations", [])
             st.session_state.citations = citations
+            trace_id = response_data.get("trace_id")
         else:
             answer_text = "Sorry, I encountered an error retrieving the response."
             st.session_state.citations = []
             
-        st.session_state.messages.append({"role": "assistant", "content": answer_text})
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer_text,
+            "trace_id": trace_id
+        })
         
     st.rerun()
+
+if st.session_state.get("show_dialog"):
+    show_comments_dialog(st.session_state.show_dialog)
