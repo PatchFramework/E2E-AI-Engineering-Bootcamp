@@ -18,12 +18,19 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["apps/api", "apps/chatbot_ui"]
+members = [
+    "apps/api",
+    "apps/chatbot_ui",
+    "apps/items_mcp_server",
+    "apps/reviews_mcp_server",
+]
 
 [dependency-groups]
 dev = [
+    "fastmcp>=3.4.4",
     "instructor>=1.15.3",
     "langchain-community>=0.4.0,<0.4.2",
+    "langchain-mcp-adapters>=0.3.0",
     "langchain-openai>=1.1.9",
     "langgraph>=1.2.2",
     "langsmith>=0.8.16",
@@ -31,3 +38,4 @@ dev = [
     "qdrant-client>=1.18.0",
     "ragas>=0.4.3",
 ]
+
