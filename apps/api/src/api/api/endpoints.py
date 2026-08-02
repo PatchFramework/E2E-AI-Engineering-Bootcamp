@@ -1,11 +1,21 @@
+# internal imports
 from api.api.models import *
-from api.agents.graph import rag_agent_wrapper
-from fastapi import APIRouter, Request
+from api.agents.graph import rag_agent_stream_wrapper
 from api.api.models import AgentRequest, AgentResponse
 from api.agents.retrieval_generation import rag_pipeline
-from qdrant_client import QdrantClient
-import logging
 from api.api.processors.submit_feedback import submit_feedback
+
+# fastapi
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+
+# qdrant
+from qdrant_client import QdrantClient
+
+# standard libraries
+import logging
+import json
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,15 +30,12 @@ feedback_router = APIRouter()
 def chat(
     request: Request,
     payload: AgentRequest
-) -> AgentResponse:
+) -> StreamingResponse:
 
-    result = rag_agent_wrapper(payload.query, str(payload.thread_id))
-
-    return AgentResponse(
-        answer=result["answer"], 
-        citations=[AgentUsedContext(**context) for context in result["used_context"]],
-        trace_id=result["trace_id"]
-        )
+    return StreamingResponse(
+        rag_agent_stream_wrapper(payload.query, str(payload.thread_id)),
+        media_type="text/event-stream"
+    )
 
 @feedback_router.post("/")
 def send_feedback(
