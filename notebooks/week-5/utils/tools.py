@@ -296,7 +296,7 @@ def add_to_shopping_cart(items: list[dict], user_id: str, cart_id: str) -> str:
     """
 
     conn.autocommit = True
-    
+
     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
         
         for item in items:
@@ -684,3 +684,4 @@ def reserve_warehouse_items(reservations: list[dict]) -> dict:
 ##################
 PRODUCT_TOOLS: List[tool] = [retrieve_formatted_context, retrieve_prefiltered_reviews]
 SHOPPING_CART_TOOLS: List[tool] = [add_to_shopping_cart, get_shopping_cart, remove_from_cart]
+WAREHOUSE_TOOLS: List[tool] = [check_warehouse_availability, reserve_warehouse_items]
