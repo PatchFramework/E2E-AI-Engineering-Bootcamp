@@ -143,34 +143,57 @@ if "feedback_submitted" not in st.session_state:
     st.session_state.feedback_submitted = {}
 if "show_dialog" not in st.session_state:
     st.session_state.show_dialog = None
-
+if "shopping_cart" not in st.session_state:
+    st.session_state.shopping_cart = None
 
 # Sidebar for Citations
 with st.sidebar:
-    st.header("Cited Products")
-    if not st.session_state.citations:
-        st.write("No product citations for the current response.")
-    else:
-        for idx, citation in enumerate(st.session_state.citations):
-            # Description as clickable link
-            desc = citation.get("description", "No description available")
-            prod_url = citation.get("product_url", "#")
-            st.markdown(f"**{idx + 1}. [{desc}]({prod_url})**")
-            
-            # Image
-            img_url = citation.get("img_url")
-            if img_url:
-                st.image(img_url, use_container_width=True)
+    suggestions_tab, shopping_cart_tab = st.tabs(["Suggestions", "Shopping Cart"])
+    with suggestions_tab:
+        if not st.session_state.citations:
+            st.write("No product citations for the current response.")
+        else:
+            for idx, citation in enumerate(st.session_state.citations):
+                # Description as clickable link
+                desc = citation.get("description", "No description available")
+                prod_url = citation.get("product_url", "#")
+                st.markdown(f"**{idx + 1}. [{desc}]({prod_url})**")
                 
-            # Average rating and rating number on one line
-            rating = citation.get("rating")
-            rating_num = citation.get("rating_number")
-            
-            rating_str = f"⭐ {rating:.1f}" if rating is not None else "⭐ N/A"
-            rating_num_str = f"({rating_num} ratings)" if rating_num is not None else "(0 ratings)"
-            
-            st.write(f"{rating_str} | {rating_num_str}")
+                # Image
+                img_url = citation.get("img_url")
+                if img_url:
+                    st.image(img_url, use_container_width=True)
+                    
+                # Average rating and rating number on one line
+                rating = citation.get("rating")
+                rating_num = citation.get("rating_number")
+                
+                rating_str = f"⭐ {rating:.1f}" if rating is not None else "⭐ N/A"
+                rating_num_str = f"({rating_num} ratings)" if rating_num is not None else "(0 ratings)"
+                
+                st.write(f"{rating_str} | {rating_num_str}")
+                st.markdown("---")
+    with shopping_cart_tab:
+        if st.session_state.shopping_cart is not None:
+            currency = ""
+            total = 0.0
+            for idx, cart_item in enumerate(st.session_state.shopping_cart):
+                st.caption(cart_item.get("description", "No description available"))
+                if "product_image_url" in cart_item:
+                    st.image(cart_item["product_image_url"])
+                st.caption(f"Price: {cart_item.get("price")} {cart_item.get("currency")}")
+                st.caption(f"Quantity: {cart_item.get("quantity")}")
+                st.caption(f"Total: {cart_item.get("total_price")} {cart_item.get("currency")}")
+                st.markdown("---")
+                currency = cart_item.get("currency")
+                total += float(cart_item.get("total_price"))
+                
             st.markdown("---")
+            st.caption(f"Total: {total} {currency}")
+            
+        else:
+            st.info("Your shopping cart is empty.")
+        
 
 
 for idx, message in enumerate(st.session_state.messages):
@@ -225,11 +248,13 @@ if prompt := st.chat_input("Hello! How can I assist you today?"):
                         answer = output["data"]["answer"]
                         used_context = output["data"]["used_context"]
                         trace_id = output["data"]["trace_id"]
+                        shopping_cart = output["data"]["shopping_cart"]
                         
                         st.session_state.used_context = used_context
                         st.session_state.citations = used_context
                         st.session_state.messages.append({"role": "assistant", "content": answer})
                         st.session_state.trace_id = trace_id
+                        st.session_state.shopping_cart = shopping_cart
                         
                         status_placeholder.empty()
                         message_placeholder.markdown(answer)

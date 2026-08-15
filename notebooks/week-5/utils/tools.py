@@ -581,7 +581,7 @@ def check_warehouse_availability(items: list[dict]) -> dict:
             return result
             
     finally:
-        conn.close()
+        pass
 
 
 ### Reserve Warehouse Items Tool ###
@@ -675,8 +675,6 @@ def reserve_warehouse_items(reservations: list[dict]) -> dict:
     except Exception as e:
         conn.rollback()
         raise e
-    finally:
-        conn.close()
 
 
 ##################
