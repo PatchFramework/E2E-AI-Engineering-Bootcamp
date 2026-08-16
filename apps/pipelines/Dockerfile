@@ -14,9 +14,13 @@ USER airflow
 RUN pip install --no-cache-dir \
     pymupdf \
     pydantic \
-    openai \
+    pydantic-settings \
+    "openai<3.0.0" \
     sqlalchemy \
     psycopg2-binary \
     pgvector \
-    boto3
+    boto3 \
+    aiohttp \
+    instructor \
+    pytest
 
