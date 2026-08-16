@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir \
     "openai<3.0.0" \
     sqlalchemy \
     psycopg2-binary \
-    pgvector \
+    "pgvector<0.3.0" \
     boto3 \
     aiohttp \
     instructor \
