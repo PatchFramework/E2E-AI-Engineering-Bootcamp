@@ -64,7 +64,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/underwriting_db
-      - S3_ENDPOINT_URL=http://minio:9000
+      - MINIO_HOST=minio
       - S3_BUCKET=filings
     volumes:
       - ./apps/api/src:/app/apps/api/src
@@ -127,6 +127,7 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
       - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
+      - MINIO_HOST=minio
     volumes:
       - ./apps/pipelines/dags:/opt/airflow/dags
       - ./apps/pipelines/tasks:/opt/airflow/tasks
@@ -153,6 +154,7 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
       - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
+      - MINIO_HOST=minio
     volumes:
       - ./apps/pipelines/dags:/opt/airflow/dags
       - ./apps/pipelines/tasks:/opt/airflow/tasks
