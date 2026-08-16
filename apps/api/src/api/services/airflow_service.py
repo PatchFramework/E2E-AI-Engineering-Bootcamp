@@ -55,3 +55,46 @@ class AirflowService:
         except Exception as e:
             logger.exception(f"Exception occurred while calling Airflow API: {e}")
             return None
+
+    @staticmethod
+    def get_dag_run_status(dag_run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches the current state of a DAG run from the Airflow REST API.
+        Returns a dict with 'state' and 'tasks', or None on error.
+
+        Airflow DAG run states: queued | running | success | failed
+        Task instance states: queued | running | success | failed | upstream_failed | skipped
+        """
+        url = f"{config.AIRFLOW_URL}/api/v1/dags/financial_ingestion_dag/dagRuns/{dag_run_id}"
+        tasks_url = f"{config.AIRFLOW_URL}/api/v1/dags/financial_ingestion_dag/dagRuns/{dag_run_id}/taskInstances"
+        try:
+            with httpx.Client() as client:
+                auth = (config.AIRFLOW_USERNAME, config.AIRFLOW_PASSWORD)
+
+                run_resp = client.get(url, auth=auth, timeout=10.0)
+                if run_resp.status_code != 200:
+                    logger.error(f"Could not fetch DAG run status. Status: {run_resp.status_code}")
+                    return None
+                run_data = run_resp.json()
+
+                tasks_resp = client.get(tasks_url, auth=auth, timeout=10.0)
+                tasks = []
+                if tasks_resp.status_code == 200:
+                    for ti in tasks_resp.json().get("task_instances", []):
+                        tasks.append({
+                            "task_id": ti.get("task_id"),
+                            "state": ti.get("state") or "queued",
+                            "start_date": ti.get("start_date"),
+                            "end_date": ti.get("end_date"),
+                        })
+
+                return {
+                    "dag_run_id": dag_run_id,
+                    "state": run_data.get("state"),
+                    "start_date": run_data.get("start_date"),
+                    "end_date": run_data.get("end_date"),
+                    "tasks": tasks,
+                }
+        except Exception as e:
+            logger.exception(f"Exception fetching DAG run status for {dag_run_id}: {e}")
+            return None

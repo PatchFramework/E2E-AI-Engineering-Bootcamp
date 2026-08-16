@@ -62,6 +62,7 @@ class DocumentResponse(BaseModel):
     fiscal_period: Optional[str] = None
     document_type: Optional[str] = None
     created_at: datetime
+    dag_run_id: Optional[str] = None  # Airflow pipeline run ID for status polling
 
     class Config:
         from_attributes = True

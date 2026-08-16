@@ -138,12 +138,32 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     )
     if not dag_run_id:
         logger.error("Failed to trigger Airflow data pipeline DAG.")
-        # We don't rollback the db transaction because the file was already uploaded.
-        # But we notify in logs.
+        try:
+            db.delete(document)
+            db.commit()
+        except Exception as delete_ex:
+            logger.error(f"Failed to delete document after Airflow trigger failure: {delete_ex}")
+            db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to trigger the processing pipeline. Ingestion could not be started."
+        )
     else:
         logger.info(f"Triggered Airflow pipeline run: {dag_run_id}")
 
-    return document
+    # Return document with dag_run_id for frontend status polling
+    return DocumentResponse(
+        id=document.id,
+        company_id=document.company_id,
+        filename=document.filename,
+        s3_path=document.s3_path,
+        content_hash=document.content_hash,
+        fiscal_year=document.fiscal_year,
+        fiscal_period=document.fiscal_period,
+        document_type=document.document_type,
+        created_at=document.created_at,
+        dag_run_id=dag_run_id,
+    )
 
 
 @api_router.get("/documents/{document_id}", response_model=DocumentResponse, tags=["Documents"])
@@ -320,3 +340,22 @@ async def correct_financial_fact(fact_id: int, payload: FinancialFactCorrectionR
 async def copilot_chat(payload: ChatSessionRequest):
     # This will route to the LangGraph copilot agent
     return {"answer": "I am the Credit Underwriting Copilot. Please ask questions about corporate filings.", "citations": []}
+
+
+# Pipeline Status Router
+@api_router.get("/pipeline/status/{dag_run_id}", tags=["Pipeline"])
+async def get_pipeline_status(dag_run_id: str):
+    """
+    Returns the current state of an Airflow DAG run and all its task instances.
+    Used by the frontend to non-blockingly poll job status after document upload.
+
+    DAG states: queued | running | success | failed
+    Task states: queued | running | success | failed | upstream_failed | skipped
+    """
+    status = AirflowService.get_dag_run_status(dag_run_id)
+    if not status:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pipeline run '{dag_run_id}' not found or Airflow is unreachable."
+        )
+    return status
