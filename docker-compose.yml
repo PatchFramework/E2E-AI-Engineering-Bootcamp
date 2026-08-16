@@ -102,6 +102,9 @@ services:
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/underwriting_db
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      #- AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
     command: db migrate
 
   airflow-webserver:
@@ -122,9 +125,13 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/underwriting_db
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
     volumes:
       - ./apps/pipelines/dags:/opt/airflow/dags
       - ./apps/pipelines/tasks:/opt/airflow/tasks
+      - ./apps/pipelines/tests:/opt/airflow/tests
+      - ./apps/api/src/api:/opt/airflow/dags/api
     command: webserver
     restart: unless-stopped
 
@@ -144,9 +151,13 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/underwriting_db
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW__WEBSERVER__SECRET_KEY}
     volumes:
       - ./apps/pipelines/dags:/opt/airflow/dags
       - ./apps/pipelines/tasks:/opt/airflow/tasks
+      - ./apps/pipelines/tests:/opt/airflow/tests
+      - ./apps/api/src/api:/opt/airflow/dags/api
     command: scheduler
     restart: unless-stopped
 

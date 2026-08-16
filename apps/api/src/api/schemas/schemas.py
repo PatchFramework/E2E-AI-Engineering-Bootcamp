@@ -49,3 +49,36 @@ class ChatSessionRequest(BaseModel):
     query: str
     thread_id: str
     company_id: int
+
+
+# Document Schemas
+class DocumentResponse(BaseModel):
+    id: int
+    company_id: int
+    filename: str
+    s3_path: str
+    content_hash: str
+    fiscal_year: Optional[int] = None
+    fiscal_period: Optional[str] = None
+    document_type: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Data Quality Issue Schemas
+class DataQualityIssueResponse(BaseModel):
+    id: int
+    company_id: int
+    document_id: Optional[int] = None
+    issue_type: str
+    severity: str
+    concept: Optional[str] = None
+    message: str
+    is_resolved: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+

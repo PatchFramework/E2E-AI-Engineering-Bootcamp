@@ -12,6 +12,11 @@ class Config(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = "minioadmin"
     AWS_REGION: str = "us-east-1"
 
+    # Airflow Configuration
+    AIRFLOW_URL: str = "http://airflow-webserver:8080"
+    AIRFLOW_USERNAME: str = "admin"
+    AIRFLOW_PASSWORD: str = "admin"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 config = Config()
