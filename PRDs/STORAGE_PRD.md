@@ -518,7 +518,7 @@ erDiagram
         int chunk_index
         text text_content
         vector embedding "pgvector 1536 dims"
-        jsonb metadata "Contains fiscal_year, concepts_contained, affected_metrics"
+        jsonb chunk_metadata "Contains fiscal_year, concepts_contained, affected_metrics"
         timestamp created_at
     }
 

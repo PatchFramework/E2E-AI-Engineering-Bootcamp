@@ -19,6 +19,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Set PATH to use the virtual environment
+ENV VIRTUAL_ENV="/app/.venv"
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/apps/api/src:$PYTHONPATH"
 

@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, Index, CheckConstraint, text
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
 from datetime import datetime
 
 Base = declarative_base()
@@ -17,6 +18,8 @@ class Company(Base):
     
     documents = relationship("Document", back_populates="company", cascade="all, delete-orphan")
     facts = relationship("FinancialFact", back_populates="company", cascade="all, delete-orphan")
+    document_chunks = relationship("DocumentChunk", back_populates="company", cascade="all, delete-orphan")
+    quality_issues = relationship("DataQualityIssue", back_populates="company", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -29,10 +32,13 @@ class Document(Base):
     content_hash = Column(String, unique=True, nullable=False)
     fiscal_year = Column(Integer, index=True)
     fiscal_period = Column(String, index=True)  # FY, Q1, etc.
+    document_type = Column(String, index=True)  # 10-K, 10-Q, Annual Report
     created_at = Column(DateTime, default=datetime.utcnow)
     
     company = relationship("Company", back_populates="documents")
     source_locations = relationship("SourceLocation", back_populates="document", cascade="all, delete-orphan")
+    document_chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    quality_issues = relationship("DataQualityIssue", back_populates="document", cascade="all, delete-orphan")
 
 
 class SourceLocation(Base):
@@ -41,13 +47,52 @@ class SourceLocation(Base):
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey('documents.id'), nullable=False)
     page_number = Column(Integer, nullable=False)
+    displayed_page_number = Column(String)  # printed label (e.g. Roman numerals)
     section = Column(String)
+    section_path = Column(String)  # hierarchical path
     text_snippet = Column(Text)
     bounding_box = Column(JSONB)  # Stored as JSON coordinate info
     object_storage_path = Column(String)  # Reference to cropped page/image in MinIO
     content_hash = Column(String)  # Unique hash of the location content
     
     document = relationship("Document", back_populates="source_locations")
+
+
+class DocumentChunk(Base):
+    __tablename__ = 'document_chunks'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    document_id = Column(Integer, ForeignKey('documents.id'), nullable=False)
+    page_number = Column(Integer, nullable=False)
+    displayed_page_number = Column(String)
+    section_path = Column(String)
+    chunk_index = Column(Integer, nullable=False)
+    text_content = Column(Text, nullable=False)
+    embedding = Column(Vector(1536), nullable=False)  # 1536 dims for openai
+    chunk_metadata = Column(JSONB)  # fiscal_year, concepts_contained, affected_metrics
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    company = relationship("Company", back_populates="document_chunks")
+    document = relationship("Document", back_populates="document_chunks")
+
+
+class DataQualityIssue(Base):
+    __tablename__ = 'data_quality_issues'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    document_id = Column(Integer, ForeignKey('documents.id'), nullable=True)
+    issue_type = Column(String, nullable=False)  # ACCOUNTING_RULE_VIOLATION, RECONCILIATION_DISCREPANCY, SANITY_CHECK_WARNING
+    severity = Column(String, nullable=False)  # WARNING, ERROR
+    concept = Column(String)
+    message = Column(Text, nullable=False)
+    is_resolved = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    company = relationship("Company", back_populates="quality_issues")
+    document = relationship("Document", back_populates="quality_issues")
+
 
 
 class FinancialFact(Base):

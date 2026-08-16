@@ -17,4 +17,6 @@ RUN pip install --no-cache-dir \
     openai \
     sqlalchemy \
     psycopg2-binary \
-    pgvector
+    pgvector \
+    boto3
+
