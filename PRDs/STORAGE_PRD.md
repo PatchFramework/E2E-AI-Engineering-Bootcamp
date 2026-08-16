@@ -456,39 +456,117 @@ This distinction is essential.
 
 # Suggested PostgreSQL Model
 
-Core relationships:
+Below is the visual Entity Relationship (ER) diagram illustrating the relationships between the database tables and their connection to S3 storage buckets.
 
-```text
-Company
-  │
-  ├── Document
-  │      │
-  │      └── SourceLocation
-  │
-  ├── FinancialFact
-  │      │
-  │      └── FinancialFactVersion
-  │              │
-  │              └── SourceLocation
-  │
-  ├── DerivedMetricValue
-  │
-  └── RatingAssessment
+```mermaid
+erDiagram
+    S3_BUCKET ||--o{ DOCUMENT : "stores PDF filings"
+    S3_BUCKET ||--o{ SOURCE_LOCATION : "stores extracted page images / crops"
+    COMPANY ||--o{ DOCUMENT : "belongs to"
+    COMPANY ||--o{ FINANCIAL_FACT : "owns facts"
+    COMPANY ||--o{ DERIVED_METRIC_VALUE : "owns metrics"
+    DOCUMENT ||--o{ SOURCE_LOCATION : "contains locations"
+    FINANCIAL_FACT ||--o{ FINANCIAL_FACT_VERSION : "versions"
+    FINANCIAL_FACT_VERSION }o--|| SOURCE_LOCATION : "evidenced by"
+    AUDIT_EVENT }o--|| COMPANY : "tracks activity for"
+    
+    COMPANY {
+        int id PK
+        string name UK
+        string ticker
+        string industry
+        text description
+        timestamp created_at
+    }
+
+    DOCUMENT {
+        int id PK
+        int company_id FK
+        string filename
+        string s3_path "Path in MinIO s3://filings/"
+        string content_hash UK "SHA-256"
+        int fiscal_year
+        string fiscal_period "FY, Q1, Q2, etc."
+        timestamp created_at
+    }
+
+    SOURCE_LOCATION {
+        int id PK
+        int document_id FK
+        int page_number
+        string section
+        text text_snippet
+        jsonb bounding_box "JSON coordinates"
+        string object_storage_path "Path in MinIO to cropped page image"
+        string content_hash "Hash of the text snippet/location"
+    }
+
+    FINANCIAL_FACT {
+        int id PK
+        int company_id FK
+        string concept "Canonical concept (e.g., EBITDA)"
+        int fiscal_year
+        string fiscal_period "FY, Q1, Q2, etc."
+        timestamp fiscal_period_start
+        timestamp fiscal_period_end
+    }
+
+    FINANCIAL_FACT_VERSION {
+        int id PK
+        int fact_id FK
+        int version "Sequential version (v1, v2, v3...)"
+        float value
+        string unit "EUR, USD, etc."
+        string origin "AI_GENERATED | ANALYST_CORRECTED | ANALYST_ENTERED"
+        string verification_status "UNVERIFIED | VERIFIED"
+        int source_location_id FK "nullable"
+        string change_reason
+        boolean is_current "true if active (enforced by partial unique index)"
+        timestamp created_at
+        string created_by
+    }
+
+    DERIVED_METRIC_VALUE {
+        int id PK
+        int company_id FK
+        string metric_name "e.g., net_debt_to_ebitda"
+        float value
+        int fiscal_year
+        string fiscal_period
+        timestamp calculated_at
+        string calculation_version
+        string input_fact_versions "JSON list of fact version IDs used"
+    }
+
+    AUDIT_EVENT {
+        int id PK
+        timestamp timestamp
+        string actor
+        string action "FACT_CORRECTED | FACT_VERIFIED | FACT_CREATED | etc."
+        string entity_type "financial_facts, documents, etc."
+        int entity_id
+        int company_id FK "nullable"
+        string previous_value
+        string new_value
+        text reason
+        string correlation_id "Matches across requests"
+    }
 ```
 
-And:
+## Database Schema Design Decisions
 
-```text
-FinancialConcept
-        ↓
-FinancialFact
-        ↓
-MetricDefinition
-        ↓
-DerivedMetricValue
-```
-
-The Copilot accesses all of these through controlled APIs/tools.
+1. **Document Ingestion & Deduplication**: Each unique document hash corresponds to a single `Document` entry. Re-uploading an identical document will not duplicate the record or re-trigger extraction.
+2. **Metadata Optimization**: Company description and industry fields are stored directly in the `companies` table.
+3. **Fiscal Period Synchronization**: Document entries carry `fiscal_year` and `fiscal_period` to represent the financial context of the filing.
+4. **Source Location Crops**: `SourceLocation` includes `object_storage_path` to reference cropped images or page images in S3 (MinIO) and `content_hash` to uniquely verify the source content. Bounding boxes are stored as PostgreSQL `JSONB` for simplicity and extensibility.
+5. **Separation of Periods**: Financial facts explicitly store `fiscal_period_start` and `fiscal_period_end` timestamps to distinguish when the financial value applies from when the database record was written.
+6. **Append-Only Fact Versioning**:
+   - `FinancialFactVersion` tracks historical changes with an explicit `version` integer column incrementing sequentially (v1, v2, v3...).
+   - A partial unique index constraint guarantees that only one version is current (`is_current = true`) per `fact_id` at any time.
+   - The active version must always be the latest version with the highest version number.
+7. **Workflow Constraints**: `origin` and `verification_status` columns are managed using PostgreSQL standard `VARCHAR` columns with database-level check constraints.
+8. **Decoupled Architecture**: Database connection pooling, session creation, and the `get_db` FastAPI dependency are isolated in a separate `database.py` service.
+9. **Automatic Migrations**: Database migrations are managed via Alembic inside `apps/api` and run automatically on API startup (as well as manually via `uv`).
 
 ---
 
