@@ -20,8 +20,11 @@ class AirflowService:
         Triggers the financial_ingestion_dag DAG run on Airflow.
         Returns the DAG run ID if successful, otherwise None.
         """
+        import uuid
+        generated_run_id = f"manual__{uuid.uuid4()}"
         url = f"{config.AIRFLOW_URL}/api/v1/dags/financial_ingestion_dag/dagRuns"
         payload = {
+            "dag_run_id": generated_run_id,
             "conf": {
                 "document_id": document_id,
                 "company_id": company_id,
@@ -42,9 +45,9 @@ class AirflowService:
                     auth=(config.AIRFLOW_USERNAME, config.AIRFLOW_PASSWORD),
                     timeout=10.0
                 )
-                if response.status_code == 201:
+                if response.status_code in (200, 201, 202):
                     data = response.json()
-                    dag_run_id = data.get("dag_run_id")
+                    dag_run_id = data.get("dag_run_id") or generated_run_id
                     logger.info(f"Successfully triggered Airflow DAG, dag_run_id: {dag_run_id}")
                     return dag_run_id
                 else:
@@ -52,6 +55,9 @@ class AirflowService:
                         f"Failed to trigger Airflow DAG. Status code: {response.status_code}, Response: {response.text}"
                     )
                     return None
+        except httpx.ReadTimeout:
+            logger.warning(f"Read timeout while triggering Airflow DAG. Assuming it was triggered with run ID: {generated_run_id}")
+            return generated_run_id
         except Exception as e:
             logger.exception(f"Exception occurred while calling Airflow API: {e}")
             return None

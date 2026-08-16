@@ -129,6 +129,9 @@ function JobCard({ job, onRemove }: { job: PipelineJob; onRemove: () => void }) 
     if (job.state === 'uploading') return 'Uploading document to storage...';
     if (job.state === 'queued') return 'Waiting in queue...';
     if (job.state === 'running') {
+      if (!job.tasks || job.tasks.length === 0) {
+        return 'Starting up pipeline...';
+      }
       const runningTasks = job.tasks.filter(t => t.state === 'running');
       if (runningTasks.length > 0) {
         const names = runningTasks.map(t => TASK_STEPS.find(s => s.id === t.task_id)?.label || t.task_id);
