@@ -1,9 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.api.endpoints import api_router
-
+from api.routers.endpoints import api_router
 import logging
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,7 +9,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(title="AI-Assisted Credit Underwriting Platform API")
 
 app.add_middleware(
     CORSMiddleware,
