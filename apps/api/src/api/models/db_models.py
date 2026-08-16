@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, Index, CheckConstraint, text
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 
 Base = declarative_base()
@@ -10,10 +11,12 @@ class Company(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)
     ticker = Column(String, index=True)
+    industry = Column(String, index=True)
+    description = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    documents = relationship("Document", back_populates="company")
-    facts = relationship("FinancialFact", back_populates="company")
+    documents = relationship("Document", back_populates="company", cascade="all, delete-orphan")
+    facts = relationship("FinancialFact", back_populates="company", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -24,10 +27,12 @@ class Document(Base):
     filename = Column(String, nullable=False)
     s3_path = Column(String, nullable=False)
     content_hash = Column(String, unique=True, nullable=False)
+    fiscal_year = Column(Integer, index=True)
+    fiscal_period = Column(String, index=True)  # FY, Q1, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     
     company = relationship("Company", back_populates="documents")
-    source_locations = relationship("SourceLocation", back_populates="document")
+    source_locations = relationship("SourceLocation", back_populates="document", cascade="all, delete-orphan")
 
 
 class SourceLocation(Base):
@@ -38,7 +43,9 @@ class SourceLocation(Base):
     page_number = Column(Integer, nullable=False)
     section = Column(String)
     text_snippet = Column(Text)
-    bounding_box = Column(String)  # Stored as json string
+    bounding_box = Column(JSONB)  # Stored as JSON coordinate info
+    object_storage_path = Column(String)  # Reference to cropped page/image in MinIO
+    content_hash = Column(String)  # Unique hash of the location content
     
     document = relationship("Document", back_populates="source_locations")
 
@@ -51,9 +58,11 @@ class FinancialFact(Base):
     concept = Column(String, index=True, nullable=False)  # e.g., EBITDA
     fiscal_year = Column(Integer, nullable=False)
     fiscal_period = Column(String, nullable=False)  # FY, Q1, etc.
+    fiscal_period_start = Column(DateTime)
+    fiscal_period_end = Column(DateTime)
     
     company = relationship("Company", back_populates="facts")
-    versions = relationship("FinancialFactVersion", back_populates="fact")
+    versions = relationship("FinancialFactVersion", back_populates="fact", cascade="all, delete-orphan")
 
 
 class FinancialFactVersion(Base):
@@ -61,17 +70,37 @@ class FinancialFactVersion(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     fact_id = Column(Integer, ForeignKey('financial_facts.id'), nullable=False)
+    version = Column(Integer, nullable=False, default=1)
     value = Column(Float, nullable=False)
     unit = Column(String, default="EUR")
-    origin = Column(String, default="AI_GENERATED")  # AI_GENERATED, ANALYST_CORRECTED
-    verification_status = Column(String, default="UNVERIFIED")  # UNVERIFIED, VERIFIED
+    origin = Column(
+        String,
+        CheckConstraint("origin IN ('AI_GENERATED', 'ANALYST_CORRECTED', 'ANALYST_ENTERED')"),
+        default="AI_GENERATED",
+        nullable=False
+    )
+    verification_status = Column(
+        String,
+        CheckConstraint("verification_status IN ('UNVERIFIED', 'VERIFIED')"),
+        default="UNVERIFIED",
+        nullable=False
+    )
     source_location_id = Column(Integer, ForeignKey('source_locations.id'), nullable=True)
     change_reason = Column(String)
-    is_current = Column(Boolean, default=True)
+    is_current = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(String)
 
     fact = relationship("FinancialFact", back_populates="versions")
+
+    __table_args__ = (
+        Index(
+            'ix_fact_versions_current_uniq',
+            'fact_id',
+            postgresql_where=text('is_current = true'),
+            unique=True
+        ),
+    )
 
 
 class DerivedMetricValue(Base):
@@ -101,3 +130,4 @@ class AuditEvent(Base):
     previous_value = Column(String)
     new_value = Column(String)
     reason = Column(Text)
+    correlation_id = Column(String, index=True)
