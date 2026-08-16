@@ -1,67 +1,155 @@
-services:
-  streamlit-app:
-    build:
-      context: .
-      dockerfile: apps/chatbot_ui/Dockerfile
-    ports:
-      - 8501:8501
-    env_file:
-      - .env
-    restart: unless-stopped
-    volumes:
-      - ./apps/chatbot_ui/src:/app/apps/chatbot_ui/src
+version: '3.8'
 
+services:
+  # ----------------------------------------------------
+  # 1. Databases & Object Storage
+  # ----------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: credit-underwriting-db
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-underwriting_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d underwriting_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    container_name: credit-underwriting-storage
+    ports:
+      - 9000:9000 # S3 API
+      - 9001:9001 # Admin Console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-05-09T17-04-24Z
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c " /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin; /usr/bin/mc mb --ignore-existing local/filings; /usr/bin/mc policy set download local/filings; exit 0; "
+
+  # ----------------------------------------------------
+  # 2. Application Backend & Frontend
+  # ----------------------------------------------------
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    container_name: credit-underwriting-api
     ports:
       - 8000:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
     env_file:
       - .env
     environment:
-      - TORCH_DYNAMO_DISABLE=1
-    restart: unless-stopped
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/underwriting_db
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_BUCKET=filings
     volumes:
       - ./apps/api/src:/app/apps/api/src
-
-  qdrant:
-    image: qdrant/qdrant
-    ports:
-      - 6333:6333
-      - 6334:6334
-    volumes:
-      - ./qdrant_data:/qdrant/storage:z
     restart: unless-stopped
 
-  postgres:
-    image: postgres:16-alpine
+  analyst-ui:
+    build:
+      context: ./apps/analyst_ui
+      dockerfile: Dockerfile
+    container_name: credit-underwriting-ui
     ports:
-      - 5432:5432
+      - 3001:3000
+    depends_on:
+      - api
     environment:
-      POSTGRES_USER: ${MULTI_TURN_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${MULTI_TURN_POSTGRES_PASSWORD}
-      POSTGRES_DB: ${MULTI_TURN_POSTGRES_DB}
-      PGDATA: ${MULTI_TURN_PGDATA}
-    restart: unless-stopped
+      - VITE_API_URL=http://localhost:8000
     volumes:
-      - ./postgres_data:${MULTI_TURN_PGDATA}
-  # items-mcp-server:
-  #   build:
-  #     context: .
-  #     dockerfile: apps/items_mcp_server/Dockerfile
-  #   ports:
-  #     - 8001:8000
-  #   env_file:
-  #     - .env
-  #   restart: unless-stopped
+      - ./apps/analyst_ui:/app
+      - /app/node_modules
+    restart: unless-stopped
 
-  # reviews-mcp-server:
-  #   build:
-  #     context: .
-  #     dockerfile: apps/reviews_mcp_server/Dockerfile
-  #   ports:
-  #     - 8002:8000
-  #   env_file:
-  #     - .env
-  #   restart: unless-stopped
+  # ----------------------------------------------------
+  # 3. Airflow Orchestration (Pipeline)
+  # ----------------------------------------------------
+  airflow-init:
+    build:
+      context: .
+      dockerfile: apps/pipelines/Dockerfile
+    container_name: credit-underwriting-airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/underwriting_db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    command: db migrate
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: apps/pipelines/Dockerfile
+    container_name: credit-underwriting-airflow-webserver
+    ports:
+      - 8080:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/underwriting_db
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./apps/pipelines/dags:/opt/airflow/dags
+      - ./apps/pipelines/tasks:/opt/airflow/tasks
+    command: webserver
+    restart: unless-stopped
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: apps/pipelines/Dockerfile
+    container_name: credit-underwriting-airflow-scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/underwriting_db
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./apps/pipelines/dags:/opt/airflow/dags
+      - ./apps/pipelines/tasks:/opt/airflow/tasks
+    command: scheduler
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
