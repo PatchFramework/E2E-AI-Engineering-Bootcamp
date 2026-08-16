@@ -51,3 +51,47 @@ any conflicting notes in the original drafts.
   services.
 - **Rationale**: Simplifies local orchestration and satisfies the PRD
   requirement of avoiding an independent vector DB for the MVP.
+
+## Data Pipelines & Ingestion Decisions
+
+- **Decision**: Automatic metadata extraction on PDF uploads.
+  - **Details**: The upload API dynamically extracts the company, fiscal year (YYYY format), fiscal period (e.g., Q1, FY26), and document type (e.g., 10-K, 10-Q) using a lightweight LLM call (`gpt-4o-mini`) on the first 3 pages of the PDF.
+  - **Rationale**: Removes manual work and ensures naming/metadata consistency.
+
+- **Decision**: MinIO Path & PDF Naming Standard.
+  - **Details**: Store original files at:
+    `filings/{company_id}/{fiscal_year}_{fiscal_period}/{document_type}_{content_hash}.pdf`
+  - **Rationale**: Clear organization that prevents conflicts and identifies documents at a glance.
+
+- **Decision**: Prioritized Deterministic Parsing with OpenAI Vision OCR Fallback.
+  - **Details**:
+    - We use PyMuPDF to extract text, bounding boxes, and tables.
+    - If a page has < 100 characters of selectable text or is detected as a scanned page, we trigger **OpenAI Vision OCR** fallback using `gpt-4o-mini` on the rendered page image.
+  - **Rationale**: Bypasses heavy system dependencies (like Tesseract binaries) in the Airflow container while handling horizontal, double-column, or scanned formats robustly.
+
+- **Decision**: In-depth Accounting Validations & Reconciliation Issues.
+  - **Details**: Perform deep accounting validation without simplifications. Mismatches and prior-year comparison reconciliations are stored in a new `data_quality_issues` table in PostgreSQL.
+  - **Rationale**: Provides the core data required for the analyst reconciliation dashboard.
+
+- **Decision**: Vector Chunk Metadata Enrichment & Strict Company Isolation.
+  - **Details**:
+    - Chunks are stored in `document_chunks` partitioned strictly by `company_id` (cross-company search is out-of-scope).
+    - Chunks are annotated with concepts they contain (e.g., `ebitda`) and the derived metrics they affect (e.g., `net_debt_to_ebitda`).
+  - **Rationale**: Restricts access context and enhances citation mapping.
+
+- **Decision**: Dual Page Numbering (Physical Index vs. Displayed Page Number).
+  - **Details**:
+    - Both `SourceLocation` and `DocumentChunk` store `page_number` (the 1-based index of the PDF file) and `displayed_page_number` (the page label printed on the page, like Roman numerals or offset digits).
+  - **Rationale**: Keeps full compatibility with UI PDF renders (which require physical indexes) and citations (which require printed labels).
+
+- **Decision**: Navigation & Irrelevant Page Filtering.
+  - **Details**:
+    - Table of Contents, cover pages, and empty navigational spacer pages are detected during layout analysis and excluded from vector chunking/indexing.
+  - **Rationale**: Eliminates useless search hits and improves token usage.
+
+- **Decision**: Chunk Contextualization via Heading Pathing.
+  - **Details**:
+    - Chunks are prefixed with their full layout section hierarchical path (e.g. `Section Path: FY26 Financial results > Cashflow vs target`).
+  - **Rationale**: Preserves the structural scope of statements, helping the embedding model distinguish between historical facts and future outlooks or plans.
+
+

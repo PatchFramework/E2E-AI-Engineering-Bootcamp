@@ -465,7 +465,11 @@ erDiagram
     COMPANY ||--o{ DOCUMENT : "belongs to"
     COMPANY ||--o{ FINANCIAL_FACT : "owns facts"
     COMPANY ||--o{ DERIVED_METRIC_VALUE : "owns metrics"
+    COMPANY ||--o{ DOCUMENT_CHUNK : "owns chunks"
+    COMPANY ||--o{ DATA_QUALITY_ISSUE : "has issues"
     DOCUMENT ||--o{ SOURCE_LOCATION : "contains locations"
+    DOCUMENT ||--o{ DOCUMENT_CHUNK : "contains chunks"
+    DOCUMENT ||--o{ DATA_QUALITY_ISSUE : "has issues"
     FINANCIAL_FACT ||--o{ FINANCIAL_FACT_VERSION : "versions"
     FINANCIAL_FACT_VERSION }o--|| SOURCE_LOCATION : "evidenced by"
     AUDIT_EVENT }o--|| COMPANY : "tracks activity for"
@@ -487,18 +491,48 @@ erDiagram
         string content_hash UK "SHA-256"
         int fiscal_year
         string fiscal_period "FY, Q1, Q2, etc."
+        string document_type "10-K, 10-Q, Annual Report"
         timestamp created_at
     }
 
     SOURCE_LOCATION {
         int id PK
         int document_id FK
-        int page_number
+        int page_number "Physical page number index"
+        string displayed_page_number "Printed label e.g., Roman numerals"
         string section
+        string section_path "Hierarchical header path"
         text text_snippet
         jsonb bounding_box "JSON coordinates"
         string object_storage_path "Path in MinIO to cropped page image"
         string content_hash "Hash of the text snippet/location"
+    }
+
+    DOCUMENT_CHUNK {
+        int id PK
+        int company_id FK "strict isolation"
+        int document_id FK
+        int page_number "Physical page number index"
+        string displayed_page_number "Printed label e.g., Roman numerals"
+        string section_path "Hierarchical header path"
+        int chunk_index
+        text text_content
+        vector embedding "pgvector 1536 dims"
+        jsonb metadata "Contains fiscal_year, concepts_contained, affected_metrics"
+        timestamp created_at
+    }
+
+
+    DATA_QUALITY_ISSUE {
+        int id PK
+        int company_id FK
+        int document_id FK "nullable"
+        string issue_type "ACCOUNTING_RULE_VIOLATION | RECONCILIATION_DISCREPANCY | SANITY_CHECK_WARNING"
+        string severity "WARNING | ERROR"
+        string concept "nullable"
+        text message
+        boolean is_resolved
+        timestamp created_at
     }
 
     FINANCIAL_FACT {
@@ -557,7 +591,8 @@ erDiagram
 
 1. **Document Ingestion & Deduplication**: Each unique document hash corresponds to a single `Document` entry. Re-uploading an identical document will not duplicate the record or re-trigger extraction.
 2. **Metadata Optimization**: Company description and industry fields are stored directly in the `companies` table.
-3. **Fiscal Period Synchronization**: Document entries carry `fiscal_year` and `fiscal_period` to represent the financial context of the filing.
+3. **Fiscal Period Synchronization**: Document entries carry `fiscal_year`, `fiscal_period`, and `document_type` to represent the financial context of the filing.
+
 4. **Source Location Crops**: `SourceLocation` includes `object_storage_path` to reference cropped images or page images in S3 (MinIO) and `content_hash` to uniquely verify the source content. Bounding boxes are stored as PostgreSQL `JSONB` for simplicity and extensibility.
 5. **Separation of Periods**: Financial facts explicitly store `fiscal_period_start` and `fiscal_period_end` timestamps to distinguish when the financial value applies from when the database record was written.
 6. **Append-Only Fact Versioning**:
