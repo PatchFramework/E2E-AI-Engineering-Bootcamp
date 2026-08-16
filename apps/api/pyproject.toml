@@ -24,6 +24,7 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1.0",
     "psycopg-binary>=3.3.4",
     "psycopg2-binary>=2.9.12",
+    "alembic>=1.13.0",
 ]
 
 [build-system]
@@ -46,4 +47,5 @@ include = [
 [dependency-groups]
 dev = [
     "langgraph>=1.2.2",
+    "pytest>=8.0.0",
 ]
