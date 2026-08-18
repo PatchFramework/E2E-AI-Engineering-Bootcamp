@@ -16,7 +16,14 @@ def find_env_file() -> str:
 
 class Config(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/underwriting_db"
+    
+    # Database Configuration
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: str = "5432"
+    POSTGRES_DB: str = "underwriting_db"
+    DATABASE_URL: Optional[str] = None
     
     # S3 / MinIO Configuration
     MINIO_HOST: str = "localhost"
@@ -28,16 +35,22 @@ class Config(BaseSettings):
     AWS_REGION: str = "us-east-1"
 
     # Airflow Configuration
-    AIRFLOW_URL: str = "http://airflow-webserver:8080"
+    AIRFLOW_HOST: str = "localhost"
+    AIRFLOW_PORT: str = "8080"
+    AIRFLOW_URL: Optional[str] = None
     AIRFLOW_USERNAME: str = "admin"
     AIRFLOW_PASSWORD: str = "admin"
 
     model_config = SettingsConfigDict(env_file=find_env_file(), extra="ignore")
 
     @model_validator(mode="after")
-    def set_s3_endpoint_url(self) -> "Config":
+    def construct_urls(self) -> "Config":
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         if not self.S3_ENDPOINT_URL:
             self.S3_ENDPOINT_URL = f"http://{self.MINIO_HOST}:{self.MINIO_PORT}"
+        if not self.AIRFLOW_URL:
+            self.AIRFLOW_URL = f"http://{self.AIRFLOW_HOST}:{self.AIRFLOW_PORT}"
         return self
 
 config = Config()
