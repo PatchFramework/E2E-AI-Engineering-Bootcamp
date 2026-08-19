@@ -41,10 +41,105 @@ for p in [CONTAINER_TASKS, CONTAINER_DAGS, LOCAL_TASKS, LOCAL_DAGS, LOCAL_API_PA
 # ---------------------------------------------------------------------------
 # Stub out pgvector before any model imports so tests run without Postgres.
 # ---------------------------------------------------------------------------
+import json
+from sqlalchemy.types import TypeDecorator, VARCHAR
+
+class MockVector(TypeDecorator):
+    impl = VARCHAR
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if isinstance(value, (list, tuple)):
+            return json.dumps(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except Exception:
+                return value
+        return value
+
 pgvector_stub = MagicMock()
-pgvector_stub.sqlalchemy.Vector = lambda dim: MagicMock()
+pgvector_stub.sqlalchemy.Vector = lambda dim: MockVector()
 sys.modules.setdefault("pgvector", pgvector_stub)
 sys.modules.setdefault("pgvector.sqlalchemy", pgvector_stub.sqlalchemy)
+
+# ---------------------------------------------------------------------------
+# Stub out airflow if running outside an Airflow container.
+# ---------------------------------------------------------------------------
+try:
+    import airflow
+except ImportError:
+    _CURRENT_DAG = None
+
+    class MockDAG:
+        def __init__(self, dag_id, default_args=None, schedule_interval=None, catchup=False, description=None):
+            self.dag_id = dag_id
+            self.default_args = default_args or {}
+            self.schedule_interval = schedule_interval
+            self.catchup = catchup
+            self.description = description
+            self.tasks = []
+
+        def __enter__(self):
+            global _CURRENT_DAG
+            _CURRENT_DAG = self
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            global _CURRENT_DAG
+            _CURRENT_DAG = None
+
+        def get_task(self, task_id):
+            for t in self.tasks:
+                if t.task_id == task_id:
+                    return t
+            raise KeyError(task_id)
+
+    class MockTask:
+        def __init__(self, task_id, python_callable=None, dag=None, **kwargs):
+            self.task_id = task_id
+            self.python_callable = python_callable
+            self.retries = kwargs.get("retries", 1)
+            self.email_on_failure = kwargs.get("email_on_failure", False)
+            self.downstream_list = set()
+            self.upstream_list = set()
+            target_dag = dag or _CURRENT_DAG
+            if target_dag is not None:
+                target_dag.tasks.append(self)
+
+        def __rshift__(self, other):
+            if isinstance(other, (list, tuple, set)):
+                for o in other:
+                    self >> o
+            else:
+                self.downstream_list.add(other)
+                other.upstream_list.add(self)
+            return other
+
+        def __lshift__(self, other):
+            if isinstance(other, (list, tuple, set)):
+                for o in other:
+                    self << o
+            else:
+                self.upstream_list.add(other)
+                other.downstream_list.add(self)
+            return other
+
+    airflow_mock = MagicMock()
+    airflow_mock.DAG = MockDAG
+    airflow_operators_mock = MagicMock()
+    airflow_operators_mock.python.PythonOperator = MockTask
+    airflow_utils_mock = MagicMock()
+    airflow_utils_mock.dag_cycle_tester.check_cycle = lambda dag: None
+
+    sys.modules.setdefault("airflow", airflow_mock)
+    sys.modules.setdefault("airflow.operators", airflow_operators_mock)
+    sys.modules.setdefault("airflow.operators.python", airflow_operators_mock.python)
+    sys.modules.setdefault("airflow.utils", airflow_utils_mock)
+    sys.modules.setdefault("airflow.utils.dag_cycle_tester", airflow_utils_mock.dag_cycle_tester)
 
 
 # ---------------------------------------------------------------------------

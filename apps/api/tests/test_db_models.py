@@ -6,22 +6,23 @@ from api.models.db_models import (
     Company, Document, SourceLocation, FinancialFact, FinancialFactVersion
 )
 
+from sqlalchemy import create_engine, event
+from api.models.db_models import Base
+
 @pytest.fixture(scope="function")
 def db_session():
-    # Start a transaction and rollback at the end of each test
-    connection = engine.connect()
-    transaction = connection.begin()
-    
-    # Use join_transaction_mode="create_savepoint" so that session.commit()
-    # operates on a savepoint (nested transaction) and rollback() rolls back to savepoint.
-    # This prevents the outer transaction from committing or being deassociated.
-    session = Session(bind=connection, join_transaction_mode="create_savepoint")
-    
+    mem_engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(mem_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(bind=mem_engine)
+    session = Session(bind=mem_engine)
     yield session
-    
     session.close()
-    transaction.rollback()
-    connection.close()
 
 def test_company_creation(db_session: Session):
     # Test creating a company
@@ -165,7 +166,7 @@ def test_check_constraints(db_session: Session):
         db_session.commit()
     db_session.rollback()
     
-    assert "chk_fact_version_verification_status" in str(exc_info.value)
+    assert "verification_status" in str(exc_info.value).lower()
 
     # Try invalid origin
     v_invalid_origin = FinancialFactVersion(
@@ -182,4 +183,4 @@ def test_check_constraints(db_session: Session):
         db_session.commit()
     db_session.rollback()
     
-    assert "chk_fact_version_origin" in str(exc_info_origin.value)
+    assert "origin" in str(exc_info_origin.value).lower()

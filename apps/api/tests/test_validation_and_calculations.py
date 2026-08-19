@@ -12,15 +12,23 @@ from api.models.db_models import (
 from api.services.metric_calculation import MetricCalculationService
 from pipelines.tasks.validation import validate_facts
 
+from sqlalchemy import create_engine, event
+from api.models.db_models import Base
+
 @pytest.fixture(scope="function")
 def db_session():
-    connection = engine.connect()
-    transaction = connection.begin()
-    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    mem_engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(mem_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(bind=mem_engine)
+    session = Session(bind=mem_engine)
     yield session
     session.close()
-    transaction.rollback()
-    connection.close()
 
 def test_derived_metric_recalculation(db_session: Session):
     # Setup company

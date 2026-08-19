@@ -209,6 +209,99 @@ class TestBalanceSheetCheck:
         assert result["status"] == "success"
 
 
+class TestCashFlowAndDebtRules:
+    def test_free_cash_flow_violation_detected(self):
+        """FCF ≠ OCF - Capex → ACCOUNTING_RULE_VIOLATION for Free Cash Flow."""
+        rows = [
+            _make_fact_row("Operating Cash Flow", 500.0, 1, 2024, "FY"),
+            _make_fact_row("Capital Expenditures", 100.0, 2, 2024, "FY"),
+            _make_fact_row("Free Cash Flow", 300.0, 3, 2024, "FY"),  # Should be 400
+        ]
+        db = _make_db_session(rows)
+
+        with patch("validation.SessionLocal", return_value=db):
+            from validation import validate_facts
+            validate_facts(EXTRACTION_RESULT, db_session=db)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert any(a.concept == "Free Cash Flow" and a.issue_type == "ACCOUNTING_RULE_VIOLATION" for a in added)
+
+    def test_total_debt_combination_violation(self):
+        """Total Debt ≠ ST Debt + LT Debt → ACCOUNTING_RULE_VIOLATION for Total Debt."""
+        rows = [
+            _make_fact_row("Short-term Debt", 100.0, 1, 2024, "FY"),
+            _make_fact_row("Long-term Debt", 400.0, 2, 2024, "FY"),
+            _make_fact_row("Total Debt", 600.0, 3, 2024, "FY"),  # Should be 500
+        ]
+        db = _make_db_session(rows)
+
+        with patch("validation.SessionLocal", return_value=db):
+            from validation import validate_facts
+            validate_facts(EXTRACTION_RESULT, db_session=db)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert any(a.concept == "Total Debt" and a.issue_type == "ACCOUNTING_RULE_VIOLATION" for a in added)
+
+    def test_working_capital_violation(self):
+        """Working Capital ≠ Current Assets - Current Liabilities."""
+        rows = [
+            _make_fact_row("Current Assets", 800.0, 1, 2024, "FY"),
+            _make_fact_row("Current Liabilities", 300.0, 2, 2024, "FY"),
+            _make_fact_row("Working Capital", 400.0, 3, 2024, "FY"),  # Should be 500
+        ]
+        db = _make_db_session(rows)
+
+        with patch("validation.SessionLocal", return_value=db):
+            from validation import validate_facts
+            validate_facts(EXTRACTION_RESULT, db_session=db)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert any(a.concept == "Working Capital" and a.issue_type == "ACCOUNTING_RULE_VIOLATION" for a in added)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Financial Sanity Checks
+# ---------------------------------------------------------------------------
+
+class TestFinancialSanityChecks:
+    def test_negative_revenue_warning(self):
+        rows = [_make_fact_row("Revenue", -500.0, 1, 2024, "FY")]
+        db = _make_db_session(rows)
+
+        with patch("validation.SessionLocal", return_value=db):
+            from validation import validate_facts
+            validate_facts(EXTRACTION_RESULT, db_session=db)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert any(a.issue_type == "SANITY_CHECK_WARNING" and a.concept == "Revenue" for a in added)
+
+    def test_negative_cash_warning(self):
+        rows = [_make_fact_row("Cash", -50.0, 1, 2024, "FY")]
+        db = _make_db_session(rows)
+
+        with patch("validation.SessionLocal", return_value=db):
+            from validation import validate_facts
+            validate_facts(EXTRACTION_RESULT, db_session=db)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert any(a.issue_type == "SANITY_CHECK_WARNING" and a.concept == "Cash" for a in added)
+
+    def test_abnormal_gross_margin_warning(self):
+        # GP 1500 on Revenue 1000 -> GM 150% (out of range)
+        rows = [
+            _make_fact_row("Revenue", 1000.0, 1, 2024, "FY"),
+            _make_fact_row("Gross Profit", 1500.0, 2, 2024, "FY"),
+        ]
+        db = _make_db_session(rows)
+
+        with patch("validation.SessionLocal", return_value=db):
+            from validation import validate_facts
+            validate_facts(EXTRACTION_RESULT, db_session=db)
+
+        added = [call.args[0] for call in db.add.call_args_list]
+        assert any(a.issue_type == "SANITY_CHECK_WARNING" and a.concept == "Gross Profit" for a in added)
+
+
 # ---------------------------------------------------------------------------
 # Tests: DB error handling
 # ---------------------------------------------------------------------------
@@ -226,3 +319,4 @@ class TestValidationErrorHandling:
                 validate_facts(EXTRACTION_RESULT, db_session=db)
 
         db.rollback.assert_called_once()
+
