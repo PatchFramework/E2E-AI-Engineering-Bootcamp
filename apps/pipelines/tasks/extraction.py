@@ -19,7 +19,9 @@ class ExtractedFact(BaseModel):
         "Operating Income", "EBITDA", "Net Income", "Total Debt", "Cash",
         "Current Assets", "Current Liabilities", "Total Equity",
         "Operating Cash Flow", "Capital Expenditures", "Total Assets",
-        "Total Liabilities", "Interest Expense"
+        "Total Liabilities", "Interest Expense", "Short-term Debt",
+        "Long-term Debt", "Short-term Investments", "Receivables",
+        "Working Capital", "Free Cash Flow"
     ] = Field(..., description="Canonical concept name from the allowed list")
     value: float = Field(..., description="The numerical value extracted from the text (convert raw strings like '$1.2B' to 1200000000.0)")
     unit: str = Field("EUR", description="The unit of the value, e.g. EUR, USD, etc. (normalize to ISO currency codes)")

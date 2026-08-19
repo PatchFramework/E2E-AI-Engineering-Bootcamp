@@ -96,19 +96,34 @@ def index_document_chunks(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
                 
                 if "revenue" in text_lower:
                     concepts.append("Revenue")
-                    affected_metrics.append("ebitda_margin")
+                    affected_metrics.extend(["revenue", "revenue_growth", "gross_margin", "ebitda_margin"])
                 if "ebitda" in text_lower:
                     concepts.append("EBITDA")
-                    affected_metrics.extend(["net_debt_to_ebitda", "ebitda_margin", "interest_coverage"])
+                    affected_metrics.extend(["ebitda", "ebitda_margin", "debt_to_ebitda", "net_debt_to_ebitda", "ebitda_to_interest", "interest_coverage"])
+                if "operating income" in text_lower or "ebit" in text_lower:
+                    concepts.append("Operating Income")
+                    affected_metrics.extend(["ebit", "ebit_to_interest"])
                 if "debt" in text_lower:
                     concepts.append("Total Debt")
-                    affected_metrics.extend(["net_debt", "net_debt_to_ebitda"])
+                    affected_metrics.extend(["total_debt", "net_debt", "debt_to_ebitda", "net_debt_to_ebitda", "debt_to_capital", "fcf_to_debt", "debt"])
+                if "cash flow" in text_lower or "operating cash" in text_lower:
+                    concepts.append("Operating Cash Flow")
+                    affected_metrics.extend(["operating_cash_flow", "free_cash_flow", "fcf_to_debt", "cash_flow_to_interest"])
                 if "cash" in text_lower:
                     concepts.append("Cash")
-                    affected_metrics.extend(["net_debt", "net_debt_to_ebitda"])
+                    affected_metrics.extend(["cash", "net_debt", "net_debt_to_ebitda", "quick_ratio", "short_term_debt_to_cash"])
                 if "interest" in text_lower:
                     concepts.append("Interest Expense")
-                    affected_metrics.append("interest_coverage")
+                    affected_metrics.extend(["ebitda_to_interest", "interest_coverage", "ebit_to_interest", "cash_flow_to_interest"])
+                if "assets" in text_lower:
+                    concepts.append("Current Assets")
+                    affected_metrics.extend(["total_assets", "current_ratio", "working_capital", "net_working_capital"])
+                if "liabilities" in text_lower:
+                    concepts.append("Current Liabilities")
+                    affected_metrics.extend(["current_ratio", "quick_ratio", "working_capital", "net_working_capital"])
+                if "equity" in text_lower:
+                    concepts.append("Total Equity")
+                    affected_metrics.extend(["equity", "debt_to_capital"])
                     
                 chunk_meta = {
                     "fiscal_year": fiscal_year,
