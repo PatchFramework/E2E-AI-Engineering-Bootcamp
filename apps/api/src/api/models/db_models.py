@@ -1,10 +1,11 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, Index, CheckConstraint, text
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, Index, CheckConstraint, text, JSON
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 
 Base = declarative_base()
+JSONType = JSON().with_variant(JSONB, "postgresql")
 
 class Company(Base):
     __tablename__ = 'companies'
@@ -51,7 +52,7 @@ class SourceLocation(Base):
     section = Column(String)
     section_path = Column(String)  # hierarchical path
     text_snippet = Column(Text)
-    bounding_box = Column(JSONB)  # Stored as JSON coordinate info
+    bounding_box = Column(JSONType)  # Stored as JSON coordinate info
     object_storage_path = Column(String)  # Reference to cropped page/image in MinIO
     content_hash = Column(String)  # Unique hash of the location content
     
@@ -70,7 +71,7 @@ class DocumentChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     text_content = Column(Text, nullable=False)
     embedding = Column(Vector(1536), nullable=False)  # 1536 dims for openai
-    chunk_metadata = Column(JSONB)  # fiscal_year, concepts_contained, affected_metrics
+    chunk_metadata = Column(JSONType)  # fiscal_year, concepts_contained, affected_metrics
     created_at = Column(DateTime, default=datetime.utcnow)
     
     company = relationship("Company", back_populates="document_chunks")
@@ -135,17 +136,34 @@ class FinancialFactVersion(Base):
     is_current = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(String)
-
     fact = relationship("FinancialFact", back_populates="versions")
+    source_location = relationship("SourceLocation")
 
     __table_args__ = (
         Index(
             'ix_fact_versions_current_uniq',
             'fact_id',
             postgresql_where=text('is_current = true'),
+            sqlite_where=text('is_current = 1'),
             unique=True
         ),
     )
+
+
+class DerivedMetricDefinition(Base):
+    __tablename__ = 'derived_metric_definitions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    metric_name = Column(String, unique=True, index=True, nullable=False)  # e.g., net_debt_to_ebitda
+    display_name = Column(String, nullable=False)  # e.g., Net Debt / EBITDA
+    category = Column(String, index=True, nullable=False)  # Profitability, Leverage, Coverage, Liquidity, Cash Flow, Balance Sheet
+    formula_expression = Column(String, nullable=False)  # e.g., (total_debt - cash) / ebitda
+    unit = Column(String, default="ratio")  # EUR, %, x, ratio
+    required_concepts = Column(JSONType)  # List of required canonical concept names
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    values = relationship("DerivedMetricValue", back_populates="metric_definition")
 
 
 class DerivedMetricValue(Base):
@@ -153,13 +171,33 @@ class DerivedMetricValue(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    metric_definition_id = Column(Integer, ForeignKey('derived_metric_definitions.id'), nullable=True)
     metric_name = Column(String, index=True, nullable=False)  # e.g., net_debt_to_ebitda
-    value = Column(Float)
+    value = Column(Float, nullable=True)
+    status = Column(String, default="AVAILABLE", nullable=False)  # AVAILABLE, UNAVAILABLE, ERROR
+    status_reason = Column(Text, nullable=True)
     fiscal_year = Column(Integer, nullable=False)
     fiscal_period = Column(String, nullable=False)
     calculated_at = Column(DateTime, default=datetime.utcnow)
     calculation_version = Column(String)
-    input_fact_versions = Column(String)  # JSON representation of fact versions used
+    input_fact_versions = Column(String)  # JSON representation of fact versions used (for backwards compatibility)
+
+    metric_definition = relationship("DerivedMetricDefinition", back_populates="values")
+    input_facts = relationship("DerivedMetricInputFact", back_populates="derived_metric", cascade="all, delete-orphan")
+
+
+class DerivedMetricInputFact(Base):
+    __tablename__ = 'derived_metric_input_facts'
+
+    id = Column(Integer, primary_key=True, index=True)
+    derived_metric_id = Column(Integer, ForeignKey('derived_metric_values.id', ondelete='CASCADE'), nullable=False)
+    fact_version_id = Column(Integer, ForeignKey('financial_fact_versions.id'), nullable=False)
+    concept_name = Column(String, nullable=False)
+    relationship_role = Column(String, default="INPUT")  # INPUT, NUMERATOR, DENOMINATOR, PRIOR_PERIOD, etc.
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    derived_metric = relationship("DerivedMetricValue", back_populates="input_facts")
+    fact_version = relationship("FinancialFactVersion")
 
 
 class AuditEvent(Base):
