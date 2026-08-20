@@ -1,133 +1,118 @@
-# Dashboard
+# UI Product Requirements Document (PRD)
 
-## Company header
+## 1. Overview & Objectives
 
-Display:
+The Analyst Frontend is an interactive credit underwriting workbench. It enables financial analysts to review automated AI extractions from corporate filings (10-Ks, 10-Qs, Annual Reports), inspect deterministic credit metrics across 6 key financial categories, verify evidence provenance down to the exact source page and snippet, and perform analyst overrides with instant, synchronous recalculation of all derived financial KPIs.
 
-```text
-Acme Corporation
-
-Suggested Rating
-BB
-
-Risk: Elevated
-
-Latest Filing
-FY2025 Annual Report
-
-Data Quality
-87% verified
-3 issues requiring review
-```
-
-## KPI category tabs
-
-```text
-Overview | Profitability | Leverage | Coverage |
-Liquidity | Cash Flow | Balance Sheet
-```
-
-Each category contains:
-
-- current value
-- previous year
-- YoY change
-- historical chart
-- risk indicator
-- source
-- verification status
+### Key Goals:
+1. **Dynamic Metric Visualization**: Replace all static dummy data with dynamic records loaded from the backend API.
+2. **Model-View-Controller (MVC) Pattern**: Structure the frontend cleanly into decoupled Models (types & business logic), Controllers (API integration & reactive state management), and Views (pure presentation components).
+3. **Full Evidence Provenance (Lineage)**: Transparently show formula calculations, input facts, source document links, and exact page references.
+4. **Interactive Data Correction UX**: Provide real business logic for verifying and correcting `FinancialFactVersion` records, triggering synchronous backend KPI recalculations and showing affected metric feedback.
+5. **Real-time Pipeline Tracker**: Non-blocking filing upload with live 5-second polling of Airflow DAG task states (`parse_pdf` -> `extract_facts` / `index_chunks` -> `validate_facts` -> `calculate_kpis`).
+6. **Credit Underwriting Copilot Integration**: Context-aware assistant panel ready for RAG and citation browsing.
 
 ---
 
-# KPI Detail View
+## 2. Architecture & Frontend Structure
 
-Clicking a KPI should open a detail drawer/page.
-
-Example:
+The application follows the **Model-View-Controller (MVC)** architectural pattern:
 
 ```text
-NET DEBT / EBITDA
-
-2025
-4.72x
-↑ 0.83x YoY
-
-Historical
-2021  2.1x
-2022  2.4x
-2023  3.0x
-2024  3.9x
-2025  4.7x
-
-Risk interpretation
-Leverage has deteriorated materially over the last
-three reporting periods.
-
-Calculation
-€840m / €178m = 4.72x
-
-Inputs
-Debt      €1,200m
-Cash        €360m
-EBITDA      €178m
-
-Sources
-Debt       Annual Report 2025 · p.87
-Cash       Annual Report 2025 · p.104
-EBITDA     Annual Report 2025 · p.42
-
-Status
-✓ Verified
+apps/analyst_ui/src/
+├── models/                     # [Model] Domain interfaces, calculation & formatting helpers
+│   ├── company.ts             # Company metadata, credit rating & quality calculation rules
+│   ├── metric.ts              # Metric definitions, historical time-series & lineage models
+│   ├── fact.ts                # Financial fact versions, verification status & correction schemas
+│   └── pipeline.ts            # Pipeline job execution states & DAG task steps
+├── controllers/                # [Controller] Reactive hooks, state machines & API services
+│   ├── apiClient.ts           # Centralized API fetch client with error handling
+│   ├── useCompanyController.ts# Manages active company state, list & quality issues
+│   ├── useMetricsController.ts# Manages metric loading, category tabs, YoY deltas & lineage
+│   ├── useFactsController.ts  # Manages fact verification, correction mutations & affected metrics
+│   └── usePipelineController.ts# Manages filing uploads & live Airflow status polling
+├── views/                      # [View] Presentation components & page layouts
+│   ├── components/
+│   │   ├── Header.tsx         # Top bar with company switcher, status badge & navigation
+│   │   ├── CompanyBanner.tsx  # Hero summary with rating, risk, filing & data quality metrics
+│   │   ├── KPICategoryTabs.tsx# Tab strip for 6 financial categories + Overview
+│   │   ├── KPIGrid.tsx        # Responsive grid layout for KPI cards
+│   │   ├── KPICard.tsx        # Metric card with current value, YoY change & sparkline
+│   │   ├── KPIDetailDrawer.tsx# Side drawer for deep metric inspection & calculation lineage
+│   │   ├── DataCorrectionModal.tsx # Modal for verifying or overriding financial facts
+│   │   └── CopilotPanel.tsx   # Underwriting AI assistant sidebar with context injection
+│   ├── DashboardView.tsx      # Main underwriting dashboard view
+│   └── UploadView.tsx         # Filing upload dropzone & pipeline tracking view
+├── App.tsx                    # Top-level application router & layout orchestrator
+└── main.tsx                   # React root entrypoint
 ```
 
 ---
 
-# Data Correction UX
+## 3. Detailed UI Specifications
 
-Click a financial fact:
+### 3.1 Company Header Banner
+Displays real-time corporate status:
+- **Company Name & Ticker**: With company switching dropdown selector.
+- **Suggested Rating & Risk**: Deterministically derived credit rating (e.g. `BB`, `Elevated Risk`).
+- **Primary Filing**: Latest fiscal report (e.g. `FY2025 Annual Report`).
+- **Data Quality Score**: Percentage of verified facts (`XX% verified`) and count of active discrepancies / data quality issues requiring review.
 
-```text
-EBITDA
-€178m
+### 3.2 KPI Category Tabs
+Category navigation supporting:
+- `Overview | Profitability | Leverage | Coverage | Liquidity | Cash Flow | Balance Sheet`
 
-Source:
-Annual Report 2025 · Page 42
+Each KPI card displays:
+- Canonical display name (e.g., `Revenue`, `Net Debt / EBITDA`, `EBITDA Margin`)
+- Current period value formatted by unit (Currency `€B/€M/€k`, Multiples `x`, Percentages `%`, Ratios)
+- Prior period value and YoY change (`+0.83x YoY`, `+12% YoY`, `-4% YoY`)
+- Directional trend indicator with risk-aware coloring (e.g., rising debt is red, rising EBITDA is green)
+- Historical sparkline / mini trend chart (Recharts)
+- Verification badge (`Verified`, `Corrected`, `AI-Generated / Unverified`, `Unavailable`)
 
-Status:
-Unverified AI-generated
+### 3.3 KPI Detail Drawer (Provenance & Lineage)
+Clicking any KPI opens a slide-over inspection drawer:
+- **Title & Primary Metrics**: Latest year value and YoY delta.
+- **Historical Performance**: 5-year historical trend chart (Recharts Area/Line chart) and data table.
+- **Risk Interpretation**: Contextual analysis of leverage, coverage, or liquidity trajectory.
+- **Formula & Computation**: Transparent formula breakdown with actual values (e.g. `€840m / €178m = 4.72x`).
+- **Input Facts Breakdown**: Each constituent fact listed with its canonical concept, value, unit, and verification status.
+- **Source Citations**: Exact document filename, filing year, section, and page number with highlight text snippet.
+- **Fact Actions**: Quick action buttons to [Verify] or [Correct] constituent facts directly from the drawer.
 
-[Verify]
-[Correct]
-```
+### 3.4 Data Correction Workflow (Analyst Overrides)
+Real business logic mutation on `FinancialFactVersion`:
+1. Analyst inspects unverified AI-extracted fact (e.g., `EBITDA: €178M` from `Page 42`).
+2. Analyst clicks **Verify** -> creates audit log and marks version as `VERIFIED`.
+3. Or Analyst clicks **Correct** -> inputs new value (e.g., `€184M`) and mandatory audit reason (e.g. `Management adjusted EBITDA figure`).
+4. System submits `POST /api/facts/{fact_id}/correct`:
+   - Deactivates previous fact version (`is_current = false`).
+   - Inserts new `FinancialFactVersion` (`origin = ANALYST_CORRECTED`, `verification_status = VERIFIED`).
+   - Logs `AuditEvent`.
+   - Synchronously triggers `MetricCalculationService.recalculate_metrics_for_period`.
+5. Frontend displays feedback toast/banner showing the updated concept and all **Affected Metrics** that were recalculated:
+   - `✓ EBITDA Margin`
+   - `✓ Debt / EBITDA`
+   - `✓ Net Debt / EBITDA`
+   - `✓ Interest Coverage`
+   - `✓ Suggested Rating`
+6. Dashboard state refreshes automatically with recalculated figures.
 
-If corrected:
-
-```text
-Original:
-€178m
-
-New:
-€184m
-
-Reason:
-Management adjusted EBITDA figure should be used.
-
-[Save correction]
-```
-
-After saving:
-
-```text
-EBITDA updated
-
-Affected metrics:
-✓ EBITDA Margin
-✓ Debt / EBITDA
-✓ Net Debt / EBITDA
-✓ Interest Coverage
-✓ Suggested Rating
-```
-
-This is one of the key product moments.
+### 3.5 Filing Ingestion & Pipeline Tracker
+- **Dropzone**: Drag-and-drop or file browser for PDF filings with multi-file support.
+- **Non-blocking Execution**: Triggers `/api/documents/upload` and receives `dag_run_id`.
+- **Live Status Polling**: Polls `/api/pipeline/status/{dag_run_id}` every 5 seconds.
+- **Topology Step Visualization**: Displays real-time progress across:
+  - `parse_pdf`: Extract text, tables & page images
+  - `extract_facts`: AI financial concept extraction
+  - `index_chunks`: Vector embeddings to pgvector
+  - `validate_facts`: Accounting rule consistency check
+  - `calculate_kpis`: Derive credit metrics
 
 ---
+
+## 4. Error Handling & Edge States
+- **Missing / Unavailable Metrics**: Explicitly display `N/A` with explanation reason (e.g. `Interest expense not reported in filing`). Never substitute zero.
+- **API Disconnections**: Non-intrusive offline indicator with automatic retry.
+- **Validation Warnings**: Highlight discrepancies visually with warning badges and actionable links to the source fact.
+
