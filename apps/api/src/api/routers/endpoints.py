@@ -10,14 +10,18 @@ from sqlalchemy import func
 from api.core.database import get_db
 from api.models.db_models import (
     Company, Document, FinancialFact, FinancialFactVersion,
-    AuditEvent, DataQualityIssue
+    AuditEvent, DataQualityIssue,
+    DerivedMetricDefinition, DerivedMetricValue, DerivedMetricInputFact
 )
 from api.schemas.schemas import (
     CompanyResponse, CompanyCreate,
     FinancialFactResponse, FinancialFactCorrectionRequest,
     ChatMessage, ChatSessionRequest,
-    DocumentResponse, DataQualityIssueResponse
+    DocumentResponse, DataQualityIssueResponse,
+    CompanyMetricResponse, MetricHistoryPoint, MetricLineageResponse,
+    FactCorrectionResponse
 )
+from api.core.metric_registry import METRIC_REGISTRY
 from api.services.storage_service import StorageService
 from api.services.metadata_extraction_service import MetadataExtractionService
 from api.services.airflow_service import AirflowService
@@ -251,11 +255,104 @@ async def get_financial_facts(company_id: int, db: Session = Depends(get_db)):
     return response
 
 
-@api_router.post("/facts/{fact_id}/correct", response_model=FinancialFactResponse, tags=["Facts"])
+def get_affected_metrics_for_concept(concept: str) -> List[str]:
+    """
+    Returns the list of metric display names whose formulas depend on the given concept.
+    """
+    affected = []
+    norm_c = concept.strip().lower().replace(" ", "_").replace("-", "_")
+    
+    # Map common aliases
+    concept_aliases = [norm_c]
+    if norm_c == "ebitda":
+        concept_aliases.extend(["ebitda"])
+    elif norm_c in ["operating_income", "ebit"]:
+        concept_aliases.extend(["operating_income", "ebit"])
+    elif norm_c in ["capital_expenditures", "capex"]:
+        concept_aliases.extend(["capital_expenditures", "capex"])
+    elif norm_c in ["total_debt", "short_term_debt", "long_term_debt"]:
+        concept_aliases.extend(["total_debt", "short_term_debt", "long_term_debt"])
+
+    for key, cfg in METRIC_REGISTRY.items():
+        req_norm = [rc.strip().lower().replace(" ", "_").replace("-", "_") for rc in cfg.required_concepts]
+        if any(alias in req_norm for alias in concept_aliases):
+            if cfg.display_name not in affected:
+                affected.append(cfg.display_name)
+                
+    if "Suggested Rating" not in affected:
+        affected.append("Suggested Rating")
+    return affected
+
+
+@api_router.post("/facts/{fact_id}/verify", response_model=FinancialFactResponse, tags=["Facts"])
+async def verify_financial_fact(fact_id: int, db: Session = Depends(get_db)):
+    """
+    Marks an active financial fact as VERIFIED, logs an audit event,
+    and recalculates derived KPIs.
+    """
+    fact = db.query(FinancialFact).filter(FinancialFact.id == fact_id).first()
+    if not fact:
+        raise HTTPException(status_code=404, detail="Financial fact not found")
+
+    version = db.query(FinancialFactVersion).filter(
+        FinancialFactVersion.fact_id == fact_id,
+        FinancialFactVersion.is_current == True
+    ).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Active fact version not found")
+
+    if version.verification_status != "VERIFIED":
+        version.verification_status = "VERIFIED"
+        audit_event = AuditEvent(
+            actor="analyst",
+            action="FACT_VERIFIED",
+            entity_type="financial_fact",
+            entity_id=fact_id,
+            company_id=fact.company_id,
+            previous_value=str(version.value),
+            new_value=str(version.value),
+            reason="Verified by analyst"
+        )
+        db.add(audit_event)
+        try:
+            db.commit()
+            db.refresh(version)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Failed to verify fact: {e}")
+
+        # Recalculate metrics
+        try:
+            MetricCalculationService.recalculate_metrics_for_period(
+                db,
+                company_id=fact.company_id,
+                year=fact.fiscal_year,
+                period=fact.fiscal_period
+            )
+        except Exception as e:
+            logger.error(f"Derived metrics recalculation failed after fact verification: {e}")
+
+    return FinancialFactResponse(
+        id=fact.id,
+        company_id=fact.company_id,
+        concept=fact.concept,
+        value=version.value,
+        unit=version.unit,
+        fiscal_year=fact.fiscal_year,
+        fiscal_period=fact.fiscal_period,
+        version=version.version,
+        origin=version.origin,
+        verification_status=version.verification_status,
+        updated_at=version.created_at
+    )
+
+
+@api_router.post("/facts/{fact_id}/correct", response_model=FactCorrectionResponse, tags=["Facts"])
 async def correct_financial_fact(fact_id: int, payload: FinancialFactCorrectionRequest, db: Session = Depends(get_db)):
     """
     Corrects a financial fact value, deactivating the old version, creating a new
     version with VERIFIED status, and triggering synchronous derived KPI recalculations.
+    Returns the updated fact and the list of affected metrics.
     """
     # 1. Fetch existing fact
     fact = db.query(FinancialFact).filter(FinancialFact.id == fact_id).first()
@@ -318,9 +415,10 @@ async def correct_financial_fact(fact_id: int, payload: FinancialFactCorrectionR
         )
     except Exception as e:
         logger.error(f"Derived metrics recalculation failed: {e}")
-        # Note: We still return success since the database transaction was committed.
 
-    return FinancialFactResponse(
+    affected_metrics = get_affected_metrics_for_concept(fact.concept)
+
+    fact_resp = FinancialFactResponse(
         id=fact.id,
         company_id=fact.company_id,
         concept=fact.concept,
@@ -333,6 +431,182 @@ async def correct_financial_fact(fact_id: int, payload: FinancialFactCorrectionR
         verification_status=new_version.verification_status,
         updated_at=new_version.created_at
     )
+    return FactCorrectionResponse(fact=fact_resp, affected_metrics=affected_metrics)
+
+
+# Derived Metrics Router
+@api_router.get("/companies/{company_id}/metrics", response_model=List[CompanyMetricResponse], tags=["Metrics"])
+async def get_company_metrics(
+    company_id: int,
+    fiscal_year: Optional[int] = None,
+    fiscal_period: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Returns calculated derived metrics for a company across all 6 financial categories,
+    including current values, prior year values, YoY deltas, and historical time-series points.
+    """
+    # 1. Determine target fiscal year if not explicitly passed
+    if fiscal_year is None:
+        latest_fact = db.query(FinancialFact).filter(
+            FinancialFact.company_id == company_id
+        ).order_by(FinancialFact.fiscal_year.desc()).first()
+
+        latest_metric = db.query(DerivedMetricValue).filter(
+            DerivedMetricValue.company_id == company_id
+        ).order_by(DerivedMetricValue.fiscal_year.desc()).first()
+
+        latest_fact_year = latest_fact.fiscal_year if latest_fact else None
+        latest_metric_year = latest_metric.fiscal_year if latest_metric else None
+
+        if latest_fact_year and latest_metric_year:
+            fiscal_year = max(latest_fact_year, latest_metric_year)
+        elif latest_fact_year:
+            fiscal_year = latest_fact_year
+        elif latest_metric_year:
+            fiscal_year = latest_metric_year
+        else:
+            fiscal_year = 2025
+
+    if fiscal_period is None:
+        # Detect active period from facts for this year
+        fact_for_year = db.query(FinancialFact).filter(
+            FinancialFact.company_id == company_id,
+            FinancialFact.fiscal_year == fiscal_year
+        ).first()
+        fiscal_period = fact_for_year.fiscal_period if fact_for_year else "FY"
+
+    # 2. Check if metrics are already calculated for target year with AVAILABLE status
+    available_metrics_count = db.query(DerivedMetricValue).filter(
+        DerivedMetricValue.company_id == company_id,
+        DerivedMetricValue.fiscal_year == fiscal_year,
+        DerivedMetricValue.status == "AVAILABLE"
+    ).count()
+
+    if available_metrics_count == 0:
+        try:
+            MetricCalculationService.recalculate_metrics_for_period(
+                db, company_id=company_id, year=fiscal_year, period=fiscal_period
+            )
+            # Also calculate for other years if facts exist
+            all_years = db.query(FinancialFact.fiscal_year, FinancialFact.fiscal_period).filter(
+                FinancialFact.company_id == company_id
+            ).distinct().all()
+            for (yr, prd) in all_years:
+                if yr != fiscal_year:
+                    MetricCalculationService.recalculate_metrics_for_period(
+                        db, company_id=company_id, year=yr, period=prd or "FY"
+                    )
+        except Exception as ex:
+            logger.warning(f"Auto-recalculation of metrics during fetch encountered warning: {ex}")
+
+    # 3. Query all derived metrics for this company
+    all_metric_values = db.query(DerivedMetricValue).filter(
+        DerivedMetricValue.company_id == company_id
+    ).all()
+
+    # Group metric values by metric_name -> list of records
+    metric_values_by_name: dict[str, list[DerivedMetricValue]] = {}
+    for val in all_metric_values:
+        metric_values_by_name.setdefault(val.metric_name, []).append(val)
+
+    # 4. Fetch definitions from DB or sync
+    definitions = {d.metric_name: d for d in db.query(DerivedMetricDefinition).all()}
+
+    response_list: List[CompanyMetricResponse] = []
+
+    for metric_name, cfg in METRIC_REGISTRY.items():
+        records = metric_values_by_name.get(metric_name, [])
+        
+        # Deduplicate records by fiscal_year, preferring AVAILABLE records
+        year_to_record: dict[int, DerivedMetricValue] = {}
+        for r in records:
+            if r.fiscal_year not in year_to_record or (r.status == "AVAILABLE" and year_to_record[r.fiscal_year].status != "AVAILABLE"):
+                year_to_record[r.fiscal_year] = r
+
+        curr_record = year_to_record.get(fiscal_year)
+        prior_record = year_to_record.get(fiscal_year - 1)
+
+        curr_val = curr_record.value if (curr_record and curr_record.status == "AVAILABLE") else None
+        prior_val = prior_record.value if (prior_record and prior_record.status == "AVAILABLE") else None
+
+        yoy_change = None
+        yoy_change_pct = None
+        trend = "neutral"
+
+        if curr_val is not None and prior_val is not None:
+            yoy_change = curr_val - prior_val
+            if prior_val != 0:
+                yoy_change_pct = (curr_val - prior_val) / abs(prior_val) * 100
+            if yoy_change > 0.0001:
+                trend = "up"
+            elif yoy_change < -0.0001:
+                trend = "down"
+
+        # Determine verification status from input facts
+        ver_status = "UNVERIFIED"
+        if curr_record and curr_record.input_facts:
+            roles_ver = [link.fact_version.verification_status for link in curr_record.input_facts if link.fact_version]
+            origins = [link.fact_version.origin for link in curr_record.input_facts if link.fact_version]
+            if any(o == "ANALYST_CORRECTED" for o in origins):
+                ver_status = "CORRECTED"
+            elif roles_ver and all(v == "VERIFIED" for v in roles_ver):
+                ver_status = "VERIFIED"
+            else:
+                ver_status = "UNVERIFIED"
+        elif curr_record and curr_record.status != "AVAILABLE":
+            ver_status = "UNAVAILABLE"
+
+        # Build unique, sorted history points
+        history_points: List[MetricHistoryPoint] = []
+        for yr in sorted(year_to_record.keys()):
+            r = year_to_record[yr]
+            history_points.append(MetricHistoryPoint(
+                fiscal_year=r.fiscal_year,
+                fiscal_period=r.fiscal_period,
+                value=r.value if r.status == "AVAILABLE" else None,
+                status=r.status
+            ))
+
+        db_def = definitions.get(metric_name)
+
+        metric_resp = CompanyMetricResponse(
+            id=curr_record.id if curr_record else None,
+            metric_name=metric_name,
+            display_name=cfg.display_name,
+            category=cfg.category,
+            formula_expression=cfg.formula_expression,
+            unit=cfg.unit,
+            description=cfg.description,
+            current_value=curr_val,
+            prior_value=prior_val,
+            yoy_change=yoy_change,
+            yoy_change_pct=yoy_change_pct,
+            trend=trend,
+            verification_status=ver_status,
+            status=curr_record.status if curr_record else ("AVAILABLE" if curr_val is not None else "UNAVAILABLE"),
+            status_reason=curr_record.status_reason if curr_record else None,
+            fiscal_year=fiscal_year,
+            fiscal_period=fiscal_period,
+            calculated_at=curr_record.calculated_at if curr_record else None,
+            history=history_points
+        )
+        response_list.append(metric_resp)
+
+    return response_list
+
+
+
+@api_router.get("/metrics/{derived_metric_id}/lineage", response_model=MetricLineageResponse, tags=["Metrics"])
+async def get_metric_lineage(derived_metric_id: int, db: Session = Depends(get_db)):
+    """
+    Returns full evidence provenance and input lineage for a calculated derived metric.
+    """
+    lineage = MetricCalculationService.get_metric_lineage(db, derived_metric_id)
+    if not lineage:
+        raise HTTPException(status_code=404, detail="Derived metric not found or has no calculation lineage.")
+    return lineage
+
 
 
 # Copilot Agent Router

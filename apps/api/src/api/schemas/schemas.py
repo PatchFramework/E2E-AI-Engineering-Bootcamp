@@ -83,3 +83,97 @@ class DataQualityIssueResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# Derived Metrics & Lineage Schemas
+class MetricHistoryPoint(BaseModel):
+    fiscal_year: int
+    fiscal_period: str
+    value: Optional[float] = None
+    status: str = "AVAILABLE"
+
+
+class CompanyMetricResponse(BaseModel):
+    id: Optional[int] = None
+    metric_name: str
+    display_name: str
+    category: str
+    formula_expression: Optional[str] = None
+    unit: str = "ratio"
+    description: Optional[str] = None
+    current_value: Optional[float] = None
+    prior_value: Optional[float] = None
+    yoy_change: Optional[float] = None
+    yoy_change_pct: Optional[float] = None
+    trend: str = "neutral"  # up, down, neutral
+    verification_status: str = "UNVERIFIED"  # VERIFIED, CORRECTED, UNVERIFIED, UNAVAILABLE
+    status: str = "AVAILABLE"  # AVAILABLE, UNAVAILABLE, ERROR
+    status_reason: Optional[str] = None
+    fiscal_year: int
+    fiscal_period: str = "FY"
+    calculated_at: Optional[datetime] = None
+    history: List[MetricHistoryPoint] = []
+
+
+class SourceLocationSchema(BaseModel):
+    location_id: Optional[int] = None
+    page_number: Optional[int] = None
+    displayed_page_number: Optional[str] = None
+    section: Optional[str] = None
+    section_path: Optional[str] = None
+    text_snippet: Optional[str] = None
+    bounding_box: Optional[Any] = None
+
+
+class DocumentInfoSchema(BaseModel):
+    document_id: Optional[int] = None
+    filename: Optional[str] = None
+    s3_path: Optional[str] = None
+    fiscal_year: Optional[int] = None
+    fiscal_period: Optional[str] = None
+
+
+class MetricInputFactLineage(BaseModel):
+    fact_id: Optional[int] = None
+    fact_version_id: Optional[int] = None
+    concept: str
+    role: str
+    value: Optional[float] = None
+    unit: str = "EUR"
+    origin: Optional[str] = None
+    verification_status: Optional[str] = None
+    source_location: Optional[SourceLocationSchema] = None
+    document: Optional[DocumentInfoSchema] = None
+
+
+class MetricCitedChunk(BaseModel):
+    chunk_id: int
+    document_id: int
+    page_number: int
+    displayed_page_number: Optional[str] = None
+    section_path: Optional[str] = None
+    text_content: str
+    chunk_metadata: Optional[Dict[str, Any]] = None
+
+
+class MetricLineageResponse(BaseModel):
+    derived_metric_id: int
+    metric_name: str
+    display_name: str
+    category: str
+    formula_expression: Optional[str] = None
+    value: Optional[float] = None
+    unit: str = "ratio"
+    status: str
+    status_reason: Optional[str] = None
+    fiscal_year: int
+    fiscal_period: str
+    calculated_at: Optional[str] = None
+    input_facts: List[MetricInputFactLineage] = []
+    cited_chunks: List[MetricCitedChunk] = []
+
+
+class FactCorrectionResponse(BaseModel):
+    fact: FinancialFactResponse
+    affected_metrics: List[str] = []
+
+
