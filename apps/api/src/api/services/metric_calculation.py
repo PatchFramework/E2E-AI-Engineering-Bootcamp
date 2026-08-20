@@ -60,10 +60,22 @@ class MetricCalculationService:
         recalculates all derived KPIs across all categories, persists snapshot records
         and establishes relational lineage in `derived_metric_input_facts`.
         """
-        logger.info(f"Triggering metric recalculation for company_id={company_id}, year={year}, period={period}")
+        period_str = (period or "FY").strip()
+        logger.info(f"Triggering metric recalculation for company_id={company_id}, year={year}, period={period_str}")
         
         # 1. Sync metric definitions in DB
         def_map = MetricCalculationService.sync_metric_definitions(db_session)
+
+        # Determine allowed period variants for current and prior years
+        is_annual = not period_str or period_str.upper() == "FY" or period_str.upper().startswith("FY")
+        if is_annual:
+            yy = str(year)[-2:]
+            allowed_current_periods = list({period_str, "FY", f"FY{yy}", f"FY{year}", f"FY {yy}", f"FY {year}"} - {None, ""})
+            prev_yy = str(year - 1)[-2:]
+            allowed_prior_periods = list({"FY", f"FY{prev_yy}", f"FY{year - 1}", f"FY {prev_yy}", f"FY {year - 1}"})
+        else:
+            allowed_current_periods = [period_str]
+            allowed_prior_periods = [period_str]
 
         # 2. Fetch current active versions of all facts for target period
         current_results = db_session.query(FinancialFact, FinancialFactVersion).join(
@@ -71,7 +83,7 @@ class MetricCalculationService:
         ).filter(
             FinancialFact.company_id == company_id,
             FinancialFact.fiscal_year == year,
-            FinancialFact.fiscal_period == period,
+            FinancialFact.fiscal_period.in_(allowed_current_periods),
             FinancialFactVersion.is_current == True
         ).all()
 
@@ -81,7 +93,7 @@ class MetricCalculationService:
         ).filter(
             FinancialFact.company_id == company_id,
             FinancialFact.fiscal_year == (year - 1),
-            FinancialFact.fiscal_period == period,
+            FinancialFact.fiscal_period.in_(allowed_prior_periods),
             FinancialFactVersion.is_current == True
         ).all()
 
@@ -189,22 +201,30 @@ class MetricCalculationService:
                 }
             }
 
-            # 5. Upsert DerivedMetricValue
-            derived_metric = db_session.query(DerivedMetricValue).filter(
+            # 5. Upsert DerivedMetricValue ensuring no duplicate rows per (company_id, metric_name, fiscal_year)
+            existing_metrics = db_session.query(DerivedMetricValue).filter(
                 DerivedMetricValue.company_id == company_id,
                 DerivedMetricValue.metric_name == metric_name,
-                DerivedMetricValue.fiscal_year == year,
-                DerivedMetricValue.fiscal_period == period
-            ).first()
+                DerivedMetricValue.fiscal_year == year
+            ).all()
 
-            if derived_metric:
+            if existing_metrics:
+                derived_metric = existing_metrics[0]
                 derived_metric.metric_definition_id = metric_def_id
                 derived_metric.value = val
                 derived_metric.status = status
                 derived_metric.status_reason = status_reason
+                derived_metric.fiscal_period = period_str
                 derived_metric.calculated_at = datetime.utcnow()
                 derived_metric.calculation_version = "2.0"
                 derived_metric.input_fact_versions = json.dumps(lineage_summary)
+                
+                # Delete duplicate records for this year if any
+                for dup in existing_metrics[1:]:
+                    db_session.query(DerivedMetricInputFact).filter(
+                        DerivedMetricInputFact.derived_metric_id == dup.id
+                    ).delete()
+                    db_session.delete(dup)
             else:
                 derived_metric = DerivedMetricValue(
                     company_id=company_id,
@@ -214,7 +234,7 @@ class MetricCalculationService:
                     status=status,
                     status_reason=status_reason,
                     fiscal_year=year,
-                    fiscal_period=period,
+                    fiscal_period=period_str,
                     calculated_at=datetime.utcnow(),
                     calculation_version="2.0",
                     input_fact_versions=json.dumps(lineage_summary)
@@ -223,12 +243,10 @@ class MetricCalculationService:
                 db_session.flush()
 
             # 6. Establish Relational Lineage in `derived_metric_input_facts`
-            # Clear old junction entries for this derived metric
             db_session.query(DerivedMetricInputFact).filter(
                 DerivedMetricInputFact.derived_metric_id == derived_metric.id
             ).delete()
 
-            # Insert new junction entries
             for ver, role in zip(used_versions, used_roles):
                 concept_name = ver.fact.concept if ver.fact else "Unknown"
                 input_fact_link = DerivedMetricInputFact(
@@ -242,14 +260,14 @@ class MetricCalculationService:
 
         db_session.commit()
         logger.info(
-            f"Recalculation complete for company {company_id} in {year} {period}. "
+            f"Recalculation complete for company {company_id} in {year} {period_str}. "
             f"Available: {calculated_count}, Unavailable: {unavailable_count}"
         )
         return {
             "status": "success",
             "company_id": company_id,
             "fiscal_year": year,
-            "fiscal_period": period,
+            "fiscal_period": period_str,
             "metrics_available": calculated_count,
             "metrics_unavailable": unavailable_count
         }
@@ -259,12 +277,6 @@ class MetricCalculationService:
         """
         Traverses relational foreign keys to assemble full provenance and evidence
         for a calculated metric without data duplication.
-        
-        Returns:
-            - Metric metadata (name, display name, category, formula, value, status)
-            - Input facts (fact ID, version, value, unit, concept, verification status)
-            - Source locations (document ID, filename, page number, bounding box, text snippet)
-            - Citable document chunks matching the source document & page/concept for RAG.
         """
         metric = db_session.query(DerivedMetricValue).options(
             joinedload(DerivedMetricValue.metric_definition),
@@ -319,6 +331,56 @@ class MetricCalculationService:
             }
             inputs_lineage.append(fact_info)
 
+        # Fallback: if input_facts list is empty, dynamically reconstruct from active facts
+        if not inputs_lineage and definition:
+            req_concepts = definition.required_concepts or []
+            if req_concepts:
+                facts = db_session.query(FinancialFact, FinancialFactVersion).join(
+                    FinancialFactVersion, FinancialFact.id == FinancialFactVersion.fact_id
+                ).filter(
+                    FinancialFact.company_id == metric.company_id,
+                    FinancialFact.fiscal_year == metric.fiscal_year,
+                    FinancialFactVersion.is_current == True
+                ).all()
+
+                for fact, ver in facts:
+                    norm_c = fact.concept.lower().replace(" ", "_").replace("-", "_")
+                    matched = any(rc.lower().replace(" ", "_").replace("-", "_") == norm_c for rc in req_concepts)
+                    if matched:
+                        loc = ver.source_location
+                        doc = loc.document if loc else None
+                        if doc:
+                            document_ids.add(doc.id)
+                        if loc and loc.page_number:
+                            page_numbers.add(loc.page_number)
+
+                        inputs_lineage.append({
+                            "fact_id": fact.id,
+                            "fact_version_id": ver.id,
+                            "concept": fact.concept,
+                            "role": "INPUT",
+                            "value": ver.value,
+                            "unit": ver.unit,
+                            "origin": ver.origin,
+                            "verification_status": ver.verification_status,
+                            "source_location": {
+                                "location_id": loc.id if loc else None,
+                                "page_number": loc.page_number if loc else None,
+                                "displayed_page_number": loc.displayed_page_number if loc else None,
+                                "section": loc.section if loc else None,
+                                "section_path": loc.section_path if loc else None,
+                                "text_snippet": loc.text_snippet if loc else None,
+                                "bounding_box": loc.bounding_box if loc else None,
+                            } if loc else None,
+                            "document": {
+                                "document_id": doc.id if doc else None,
+                                "filename": doc.filename if doc else None,
+                                "s3_path": doc.s3_path if doc else None,
+                                "fiscal_year": doc.fiscal_year if doc else None,
+                                "fiscal_period": doc.fiscal_period if doc else None,
+                            } if doc else None
+                        })
+
         # Retrieve relevant DocumentChunks for RAG citations
         cited_chunks = []
         if document_ids:
@@ -354,3 +416,4 @@ class MetricCalculationService:
             "input_facts": inputs_lineage,
             "cited_chunks": cited_chunks
         }
+
