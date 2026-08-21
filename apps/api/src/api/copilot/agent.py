@@ -1,23 +1,174 @@
+import asyncio
+import json
 import logging
-from typing import TypedDict, List, Dict, Any
+import uuid
+from datetime import datetime
+from typing import AsyncGenerator, Dict, Any, Optional, List
+from sqlalchemy.orm import Session
+from langchain_core.messages import HumanMessage, AIMessage
+
+from api.models.db_models import ChatSession, ChatMessage
+from api.copilot.graph import build_copilot_graph
+from api.copilot.state import CopilotGraphState
+from api.copilot.pruning import prune_messages_state
 
 logger = logging.getLogger(__name__)
 
-# State definition
-class AgentState(TypedDict):
-    messages: List[Dict[str, str]]
-    company_id: int
-    current_filing: str
-    derived_metrics: Dict[str, Any]
+class UnderwritingCopilotService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.graph = build_copilot_graph(db)
 
-# Placeholder for LangGraph agent
-class UnderwritingAgent:
-    def __init__(self):
-        logger.info("Initializing Underwriting Copilot Agent...")
+    async def stream_chat(
+        self,
+        session_id: str,
+        user_message: str,
+        company_id: int,
+        context_snapshot: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = "analyst"
+    ) -> AsyncGenerator[str, None]:
+        """
+        Executes the LangGraph Copilot workflow and streams SSE frames to the client.
+        Persists conversation state into PostgreSQL `chat_sessions` and `chat_messages`.
+        """
+        context_snapshot = context_snapshot or {}
+        active_metric = context_snapshot.get("activeMetric")
 
-    def run_agent(self, query: str, thread_id: str, company_id: int):
-        # We will build the LangGraph workflow here.
-        return {
-            "answer": "This is a placeholder for the LangGraph agent.",
-            "citations": []
+        # 1. Fetch or create ChatSession in DB
+        chat_session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if not chat_session:
+            chat_session = ChatSession(
+                id=session_id,
+                company_id=company_id,
+                title=user_message[:32] + ("..." if len(user_message) > 32 else ""),
+                created_at=datetime.utcnow()
+            )
+            self.db.add(chat_session)
+            self.db.commit()
+
+        # 2. Persist User Message
+        user_db_msg = ChatMessage(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            role="user",
+            content=user_message,
+            context_snapshot=context_snapshot,
+            created_at=datetime.utcnow()
+        )
+        self.db.add(user_db_msg)
+        self.db.commit()
+
+        # 3. Load historical messages from DB
+        db_messages = self.db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id
+        ).order_by(ChatMessage.created_at.asc()).all()
+
+        langchain_messages = []
+        for m in db_messages:
+            if m.role == "user":
+                langchain_messages.append(HumanMessage(content=m.content))
+            elif m.role == "assistant":
+                langchain_messages.append(AIMessage(content=m.content))
+
+        # Prune old tool messages and count turns
+        pruned_messages = prune_messages_state(langchain_messages)
+        turn_count = len([m for m in pruned_messages if isinstance(m, HumanMessage)])
+
+        # Generate run ID for LangSmith tracing
+        run_id = str(uuid.uuid4())
+
+        # Initial State
+        initial_state: CopilotGraphState = {
+            "messages": pruned_messages,
+            "company_id": company_id,
+            "session_id": session_id,
+            "user_id": user_id,
+            "active_metric": active_metric,
+            "context_snapshot": context_snapshot,
+            "execution_plan": [],
+            "current_step_index": 0,
+            "reasoning_status": "Analyzing request & underwriting context...",
+            "metric_results": None,
+            "rag_chunks": None,
+            "quality_issues": None,
+            "pending_widget": None,
+            "widget_validation_retries": 0,
+            "widget_validation_error": None,
+            "retrieved_sources": [],
+            "run_id": run_id,
+            "turn_count": turn_count
         }
+
+        # 4. Stream Initial Handshake & Status Events
+        yield f"event: trace\ndata: {json.dumps({'run_id': run_id})}\n\n"
+        yield f"event: status\ndata: {json.dumps({'step': 'plan', 'message': 'Analyzing request & underwriting context...'})}\n\n"
+
+        try:
+            # 5. Run Graph Workflow (sync execution wrapped in asyncio)
+            loop = asyncio.get_running_loop()
+            final_state = await loop.run_in_executor(None, self.graph.invoke, initial_state)
+
+            # Emit intermediate status updates if any
+            if final_state.get("reasoning_status"):
+                yield f"event: status\ndata: {json.dumps({'step': 'process', 'message': final_state['reasoning_status']})}\n\n"
+
+            # 6. Stream Assistant Content Tokens
+            assistant_messages = [m for m in final_state.get("messages", []) if isinstance(m, AIMessage)]
+            final_ai_msg = assistant_messages[-1] if assistant_messages else AIMessage(content="Analysis complete.")
+            full_text = final_ai_msg.content
+
+            # Token streaming simulation over SSE
+            words = full_text.split(" ")
+            for idx, word in enumerate(words):
+                chunk = (word if idx == 0 else " " + word)
+                yield f"data: {json.dumps({'content': chunk})}\n\n"
+                await asyncio.sleep(0.015)
+
+            # 7. Stream Validated Generative UI Widget (if generated)
+            final_widget = final_state.get("pending_widget")
+            if final_widget:
+                yield f"event: widget\ndata: {json.dumps(final_widget)}\n\n"
+                yield f"data: {json.dumps({'widget': final_widget})}\n\n"
+
+            # 8. Stream Grounded Citations Array
+            citations_list = [c.model_dump() for c in final_state.get("retrieved_sources", [])]
+            if citations_list:
+                # Format to camelCase for frontend CopilotCitation model
+                frontend_citations = [
+                    {
+                        "documentId": c["document_id"],
+                        "filename": c["filename"],
+                        "pageNumber": c["page_number"],
+                        "displayedPage": c["displayed_page"],
+                        "section": c.get("section"),
+                        "snippet": c.get("snippet"),
+                        "boundingBox": c.get("bounding_box")
+                    }
+                    for c in citations_list
+                ]
+                yield f"event: citations\ndata: {json.dumps(frontend_citations)}\n\n"
+                yield f"data: {json.dumps({'citations': frontend_citations})}\n\n"
+
+            # 9. Persist Assistant Response in PostgreSQL
+            assistant_db_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="assistant",
+                content=full_text,
+                widgets=[final_widget] if final_widget else None,
+                citations=citations_list if citations_list else None,
+                created_at=datetime.utcnow()
+            )
+            self.db.add(assistant_db_msg)
+            self.db.commit()
+
+            # 10. Done Event
+            yield f"event: done\ndata: {json.dumps({'session_id': session_id, 'message_id': assistant_db_msg.id, 'turn_count': turn_count, 'max_turns': 10})}\n\n"
+            yield f"data: [DONE]\n\n"
+
+        except asyncio.CancelledError:
+            logger.info(f"Stream generation cancelled by client for session {session_id}")
+            raise
+        except Exception as e:
+            logger.exception(f"Copilot streaming workflow failed: {e}")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
