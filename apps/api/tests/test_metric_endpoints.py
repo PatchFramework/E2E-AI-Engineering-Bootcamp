@@ -231,3 +231,21 @@ def test_verify_and_correct_fact_endpoints(client, test_db):
     # Net debt = 840M / 184M = 4.5652...
     assert pytest.approx(net_debt_ebitda["current_value"], 0.01) == 4.57
     assert net_debt_ebitda["verification_status"] == "CORRECTED"
+
+
+def test_get_document_file_endpoint(client, test_db, monkeypatch):
+    company = seed_sample_company_facts(test_db)
+    doc = test_db.query(Document).filter(Document.company_id == company.id).first()
+    assert doc is not None
+
+    fake_pdf_bytes = b"%PDF-1.4 test content..."
+
+    from api.services.storage_service import StorageService
+    monkeypatch.setattr(StorageService, "download_file", lambda s3_key: fake_pdf_bytes)
+
+    res = client.get(f"/api/documents/{doc.id}/file")
+    assert res.status_code == 200
+    assert res.content == fake_pdf_bytes
+    assert res.headers["content-type"] == "application/pdf"
+    assert f'inline; filename="{doc.filename}"' in res.headers["content-disposition"]
+

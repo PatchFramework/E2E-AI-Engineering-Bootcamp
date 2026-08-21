@@ -181,6 +181,27 @@ async def get_document(document_id: int, db: Session = Depends(get_db)):
     return doc
 
 
+@api_router.get("/documents/{document_id}/file", tags=["Documents"])
+async def get_document_file(document_id: int, db: Session = Depends(get_db)):
+    """
+    Streams the entire original document file from S3.
+    """
+    doc_record = db.query(Document).filter(Document.id == document_id).first()
+    if not doc_record:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        pdf_bytes = StorageService.download_file(doc_record.s3_path)
+        filename = doc_record.filename or f"document_{document_id}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'}
+        )
+    except Exception as e:
+        logger.exception(f"Failed to fetch document file from S3: {e}")
+        raise HTTPException(status_code=404, detail=f"File not found in storage: {e}")
+
+
 @api_router.get("/documents/{document_id}/pages/{page_number}", tags=["Documents"])
 async def get_document_page_image(document_id: int, page_number: int, db: Session = Depends(get_db)):
     """
