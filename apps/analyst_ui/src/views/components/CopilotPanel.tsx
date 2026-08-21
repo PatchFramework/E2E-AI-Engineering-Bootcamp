@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   TrendingUp,
   ArrowRight,
@@ -11,10 +11,16 @@ import {
   Plus,
   History,
   ChevronRight,
+  ChevronDown,
   Loader2,
   X,
   Target,
   FileText,
+  Building,
+  Layers,
+  CheckCircle2,
+  Clock,
+  Calculator,
 } from 'lucide-react';
 import { CopilotMessage, CopilotContextSnapshot, ChatSessionSummary, CopilotCitation } from '../../models/copilot';
 import { ChartWidgetRenderer } from './copilot/ChartWidgetRenderer';
@@ -37,6 +43,19 @@ interface CopilotPanelProps {
   onOpenCitation?: (citation: CopilotCitation) => void;
 }
 
+const formatFactValue = (val: number, unit?: string) => {
+  if (Math.abs(val) >= 1_000_000_000) {
+    return `€${(val / 1_000_000_000).toFixed(2)}B`;
+  }
+  if (Math.abs(val) >= 1_000_000) {
+    return `€${(val / 1_000_000).toFixed(1)}M`;
+  }
+  if (Math.abs(val) >= 1_000) {
+    return `€${(val / 1_000).toFixed(0)}k`;
+  }
+  return `${val} ${unit || ''}`;
+};
+
 export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   isOpen,
   onToggleOpen,
@@ -56,6 +75,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
+  const [isContextExpanded, setIsContextExpanded] = useState(false);
   const isDraggingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -69,13 +89,18 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   // Handle Drag-to-Resize on left border
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     isDraggingRef.current = true;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
 
     const startX = e.clientX;
     const startWidth = width;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingRef.current) return;
+      moveEvent.preventDefault();
       const delta = startX - moveEvent.clientX;
       const newWidth = Math.min(800, Math.max(360, startWidth + delta));
       onWidthChange(newWidth);
@@ -83,6 +108,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
     const handleMouseUp = () => {
       isDraggingRef.current = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -98,14 +125,19 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     setQuery('');
   };
 
-  // Dynamic context pill label
-  const activeFocusLabel = contextSnapshot.activeMetric
-    ? `Metric: ${contextSnapshot.activeMetric.display_name}`
-    : contextSnapshot.activeFacts && contextSnapshot.activeFacts.length > 0
-    ? `${contextSnapshot.activeFacts.length} Facts (${contextSnapshot.activeFacts.map(f => f.concept).join(', ')})`
-    : contextSnapshot.activeDocuments && contextSnapshot.activeDocuments.length > 0
-    ? `Doc: ${contextSnapshot.activeDocuments[0].displayedPage}`
-    : `Company: ${contextSnapshot.companyName || 'Acme Corp'}`;
+  // Compute grounding items count
+  const contextStats = useMemo(() => {
+    let count = 0;
+    if (contextSnapshot.companyName) count++;
+    if (contextSnapshot.activeMetric) count++;
+    if (contextSnapshot.activeFacts && contextSnapshot.activeFacts.length > 0) {
+      count += contextSnapshot.activeFacts.length;
+    }
+    if (contextSnapshot.activeDocuments && contextSnapshot.activeDocuments.length > 0) {
+      count += contextSnapshot.activeDocuments.length;
+    }
+    return count;
+  }, [contextSnapshot]);
 
   const suggestedPrompts = [
     contextSnapshot.activeMetric
@@ -132,7 +164,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   return (
     <aside
       style={{ width: `${width}px` }}
-      className="relative flex flex-col h-full bg-slate-900/95 border-l border-slate-800 backdrop-blur-xl shadow-2xl z-30 transition-all duration-75 select-none"
+      className="relative flex flex-col h-full flex-shrink-0 min-h-0 bg-slate-900/95 border-l border-slate-800 backdrop-blur-xl shadow-2xl z-30 transition-all duration-75 select-none overflow-hidden"
     >
       {/* Horizontal Resize Drag Handle on Left Border */}
       <div
@@ -193,16 +225,136 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         </div>
       </div>
 
-      {/* Dynamic Context Focus Pill Bar */}
-      <div className="px-3.5 py-1.5 bg-slate-950/40 border-b border-slate-850 flex items-center justify-between text-[10px]">
-        <div className="flex items-center gap-1.5 text-slate-300 font-medium truncate">
-          <Target className="w-3 h-3 text-brand-400 flex-shrink-0" />
-          <span className="text-slate-400">Context:</span>
-          <span className="text-slate-200 font-semibold truncate">{activeFocusLabel}</span>
+      {/* Expandable Grounding Context Header */}
+      <div className="border-b border-slate-850 bg-slate-950/60 transition-colors">
+        {/* Compact Toggle Row */}
+        <div
+          onClick={() => setIsContextExpanded(!isContextExpanded)}
+          className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-slate-900/50 transition"
+        >
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-slate-300 truncate">
+            <Target className="w-3 h-3 text-brand-400 flex-shrink-0" />
+            <span className="text-slate-400">Context:</span>
+            <span className="text-slate-200 font-semibold truncate">
+              {contextSnapshot.activeMetric
+                ? `Metric: ${contextSnapshot.activeMetric.display_name}`
+                : contextSnapshot.companyName || 'Acme Corp'}
+            </span>
+            {contextStats > 1 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-brand-950 text-brand-300 border border-brand-800/80 text-[9px] font-bold">
+                +{contextStats - 1} more
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 text-[9px] text-slate-400 font-medium">
+            <span className="hidden sm:inline">{isContextExpanded ? 'Hide' : 'Details'}</span>
+            <ChevronDown
+              className={`w-3 h-3 text-slate-400 transition-transform duration-200 ${
+                isContextExpanded ? 'rotate-180 text-brand-400' : ''
+              }`}
+            />
+          </div>
         </div>
-        <span className="text-[9px] bg-slate-800/80 px-1.5 py-0.5 rounded text-brand-300 font-bold uppercase tracking-wider border border-slate-700/50 flex-shrink-0">
-          Grounded
-        </span>
+
+        {/* Expanded Grounding Information Drawer */}
+        {isContextExpanded && (
+          <div className="p-3 bg-slate-950/95 border-t border-slate-850/80 max-h-56 overflow-y-auto space-y-2.5 animate-fadeIn text-[11px]">
+            {/* 1. Active Company */}
+            {contextSnapshot.companyName && (
+              <div>
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                  Active Company
+                </span>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-200">
+                  <Building className="w-3 h-3 text-sky-400" />
+                  <span className="font-semibold">{contextSnapshot.companyName}</span>
+                </div>
+              </div>
+            )}
+
+            {/* 2. Active KPI Focus */}
+            {contextSnapshot.activeMetric && (
+              <div>
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                  Focused Metric
+                </span>
+                <div className="p-2 rounded-lg bg-brand-950/50 border border-brand-800/60 text-slate-200 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-brand-300 flex items-center gap-1">
+                      <Calculator className="w-3 h-3 text-brand-400" />
+                      {contextSnapshot.activeMetric.display_name}
+                    </span>
+                    <span className="font-mono font-bold text-xs text-white">
+                      {contextSnapshot.activeMetric.current_value !== null
+                        ? `${contextSnapshot.activeMetric.current_value}${contextSnapshot.activeMetric.unit || ''}`
+                        : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    Formula: {contextSnapshot.activeMetric.formula_expression}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. Constituent Financial Facts */}
+            {contextSnapshot.activeFacts && contextSnapshot.activeFacts.length > 0 && (
+              <div>
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                  Input Facts ({contextSnapshot.activeFacts.length})
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {contextSnapshot.activeFacts.map((fact, fIdx) => (
+                    <div
+                      key={fact.id || fIdx}
+                      title={fact.verification_status === 'VERIFIED' ? 'Verified Fact' : 'Unverified Fact'}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[10px] text-slate-300"
+                    >
+                      <Layers className="w-2.5 h-2.5 text-indigo-400" />
+                      <span className="font-medium">{fact.concept}:</span>
+                      <span className="font-mono text-slate-100 font-semibold">
+                        {formatFactValue(fact.value, fact.unit)}
+                      </span>
+                      {fact.verification_status === 'VERIFIED' ? (
+                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                      ) : (
+                        <Clock className="w-2.5 h-2.5 text-amber-400" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 4. Active Document & Page References */}
+            {contextSnapshot.activeDocuments && contextSnapshot.activeDocuments.length > 0 && (
+              <div>
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                  Referenced Documents & Pages
+                </span>
+                <div className="space-y-1">
+                  {contextSnapshot.activeDocuments.map((doc, dIdx) => (
+                    <div
+                      key={dIdx}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[10px] text-slate-300"
+                    >
+                      <FileText className="w-3 h-3 text-brand-400" />
+                      <span className="font-semibold text-slate-200">
+                        {doc.filename || 'Filing'} · {doc.displayedPage}
+                      </span>
+                      {doc.snippet && (
+                        <span className="text-slate-400 truncate italic max-w-[180px]">
+                          "{doc.snippet}"
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* History Slide-Over Drawer */}
