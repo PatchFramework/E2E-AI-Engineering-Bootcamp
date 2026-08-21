@@ -630,12 +630,11 @@ async def get_metric_lineage(derived_metric_id: int, db: Session = Depends(get_d
 
 
 
-# Copilot Agent Router
-@api_router.post("/copilot/chat", tags=["Copilot"])
-async def copilot_chat(payload: ChatSessionRequest):
-    # This will route to the LangGraph copilot agent
-    return {"answer": "I am the Credit Underwriting Copilot. Please ask questions about corporate filings.", "citations": []}
+from api.copilot.schemas.citation_schemas import CitationSource
+from api.routers.copilot import copilot_router
 
+# Include Copilot sub-router
+api_router.include_router(copilot_router)
 
 # Pipeline Status Router
 @api_router.get("/pipeline/status/{dag_run_id}", tags=["Pipeline"])
