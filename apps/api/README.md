@@ -414,7 +414,14 @@ erDiagram
 | Method | Path | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/pipeline/status/{dag_run_id}` | Query Airflow DAG run state and individual task instance progress for UI polling. |
-| `POST` | `/api/copilot/chat` | Credit Underwriting Copilot conversational assistant. |
+| `POST` | `/api/copilot/chat/stream` | Real-time SSE stream for Copilot reasoning status, tokens, generative UI widgets, and citations. |
+| `POST` | `/api/copilot/chat/abort` | Abort active agent generation and interrupt the underlying LangGraph task. |
+| `GET` | `/api/copilot/sessions` | List all historical chat sessions for a company (`?company_id={id}`). |
+| `POST` | `/api/copilot/sessions` | Create a new conversation session for a company. |
+| `GET` | `/api/copilot/sessions/{session_id}/messages` | Retrieve message history, widgets, and citations for a chat session. |
+| `POST` | `/api/copilot/feedback` | Submit analyst thumbs up/down feedback or corrections to active LangSmith traces. |
+
+For an in-depth guide on the Copilot LangGraph architecture, subagent delegation, Agentic Hybrid RAG, GenUI self-correction loops, and tool specifications, see the **[Copilot Architecture Guide](./src/api/copilot/README.md)**.
 
 ---
 
@@ -431,7 +438,11 @@ erDiagram
 | `AWS_SECRET_ACCESS_KEY` | MinIO root secret key | `minioadmin` |
 | `AIRFLOW_HOST` / `PORT` | Airflow webserver host and port | `airflow-webserver` / `8080` |
 | `AIRFLOW_USERNAME` / `PASSWORD` | Airflow REST API authentication credentials | `admin` / `admin` |
-| `OPENAI_API_KEY` | OpenAI API key for structured metadata extraction | `${OPENAI_API_KEY}` |
+| `OPENAI_API_KEY` | OpenAI API key for structured metadata extraction & Copilot LLM | `${OPENAI_API_KEY}` |
+| `LANGCHAIN_TRACING_V2` | Enable LangSmith tracing for Copilot multi-agent graph runs | `true` |
+| `LANGCHAIN_API_KEY` | LangSmith API key for trace logging and Prompt Hub pulling | `${LANGCHAIN_API_KEY}` |
+| `LANGCHAIN_PROJECT` | LangSmith project name for traces | `credit-underwriting-copilot` |
+| `LANGCHAIN_ENDPOINT` | LangSmith API endpoint | `https://api.smith.langchain.com` |
 
 ---
 
@@ -453,3 +464,4 @@ poetry run uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload
 cd apps/api
 pytest tests/
 ```
+
