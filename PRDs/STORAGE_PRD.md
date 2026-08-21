@@ -688,3 +688,39 @@ LangSmith answers:
 The application audit log answers:
 
 > What happened to the financial data?
+
+---
+
+# Copilot Chat History & Session Storage
+
+To support multi-session conversations, auditability, and past chat switching, Copilot sessions and messages are persisted in PostgreSQL.
+
+### Relational Schema
+
+```sql
+CREATE TABLE chat_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX idx_chat_sessions_company_id ON chat_sessions(company_id);
+
+CREATE TABLE chat_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL, -- 'user' | 'assistant' | 'system'
+    content TEXT NOT NULL,
+    tool_calls JSONB,           -- List of executed tool names & args
+    citations JSONB,            -- List of document citations (page, bbox, snippet)
+    widgets JSONB,              -- Structured Generative UI widget specs (charts, tables)
+    context_snapshot JSONB,     -- UI context at invocation (active KPI, active doc/page)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX idx_chat_messages_session_id ON chat_messages(session_id);
+```
+

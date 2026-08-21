@@ -89,9 +89,35 @@ any conflicting notes in the original drafts.
     - Table of Contents, cover pages, and empty navigational spacer pages are detected during layout analysis and excluded from vector chunking/indexing.
   - **Rationale**: Eliminates useless search hits and improves token usage.
 
-- **Decision**: Chunk Contextualization via Heading Pathing.
-  - **Details**:
-    - Chunks are prefixed with their full layout section hierarchical path (e.g. `Section Path: FY26 Financial results > Cashflow vs target`).
-  - **Rationale**: Preserves the structural scope of statements, helping the embedding model distinguish between historical facts and future outlooks or plans.
+## Credit Underwriting Copilot & Agent Architecture
+
+- **Decision**: Omnipresent Resizable Copilot Panel.
+  - **Details**: The Copilot is elevated to the global application layout (`App.tsx`), accessible on all screens with a horizontal drag-to-resize handle (dynamic width between 360px and 800px) and a toggle-to-collapse trigger.
+  - **Rationale**: Analysts need side-by-side access to the Copilot during filing uploads, KPI inspection, and fact corrections. Resizing allows expanding the panel when viewing complex dynamic data visualizations.
+
+- **Decision**: Eager Minimal Context Ingestion + On-Demand Retrieval.
+  - **Details**: The UI automatically injects active navigation state, active company, open KPI/facts, and open document/page pointers in the chat request. Detailed data is NOT dumped into the prompt; instead, the agent is equipped with deterministic tools to query relevant facts, chunks, and history dynamically.
+  - **Rationale**: Keeps prompt token usage lean and eliminates hallucinated or stale context while empowering the agent to fetch precise records.
+
+- **Decision**: LangGraph Multi-Skill Architecture with LangSmith Tracing.
+  - **Details**: Copilot backend is organized as a LangGraph state graph with a supervisor node and specialized skills (Document/RAG, Financial Analysis, Data Quality/Audit, Dynamic Dashboard Builder). All runs are traced in LangSmith with metadata tags (`company_id`, `session_id`).
+  - **Rationale**: Modular, inspectable tool routing prevents tool-selection confusion and ensures complete auditability of reasoning steps.
+
+- **Decision**: Deterministic Financial Tools over LLM Arithmetic.
+  - **Details**: All numerical evaluations, metric histories, single-metric checks, formula resolutions, and accounting aggregations are executed via deterministic Python services (`MetricCalculationService`) and database queries.
+  - **Rationale**: LLMs are unreliable at arithmetic. Strict separation guarantees 100% mathematical accuracy.
+
+- **Decision**: Generative UI Native Widgets with Pydantic Validation & Image Export.
+  - **Details**: For visual answers, the agent produces structured JSON widget specifications (Line charts, Bar charts, Pie charts, Word Clouds / Concept Frequency). Specs are validated against strict Pydantic schemas with automatic LLM self-correction retries if malformed. The frontend renders them with Recharts and provides one-click PNG/SVG download.
+  - **Rationale**: Delivers interactive, responsive native visualizations without arbitrary code execution risks, with guaranteed schema safety and exportability.
+
+- **Decision**: Grounded PDF Citations & Bounding-Box Navigation.
+  - **Details**: Every factual claim and financial fact used by the agent includes structured citation metadata (`document_id`, `page_number`, `bounding_box`). Clicking any citation in the chat navigates the UI document preview directly to the target page and highlights the bounding box.
+  - **Rationale**: Maintains the core product pillar of complete evidence provenance and zero ungrounded assertions.
+
+- **Decision**: SSE Streaming, Human-Friendly Reasoning States & PostgreSQL Session Persistence.
+  - **Details**: The agent communicates over Server-Sent Events (SSE), streaming tokens and human-friendly reasoning step updates (`"Searching filing debt schedule..."`, `"Calculating 5-year leverage history..."`). Analysts can abort active generations, start fresh chat sessions, and switch between past conversations persisted in PostgreSQL (`chat_sessions`, `chat_messages`).
+  - **Rationale**: Delivers high responsiveness, clear visibility into backend tool executions, and audit-compliant conversation tracking.
+
 
 

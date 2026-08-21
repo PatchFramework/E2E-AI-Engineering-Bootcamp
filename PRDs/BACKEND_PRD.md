@@ -1,103 +1,80 @@
-# AI Copilot UX
+# AI Copilot Backend Architecture & Tools
 
-There should be **one Copilot mode**.
+The Underwriting Copilot is implemented as an orchestrated **LangGraph StateGraph** leveraging **LangSmith tracing**, deterministic calculation tools, hybrid pgvector retrieval, and validated Generative UI widget output.
 
-The company context is automatically injected.
+## LangGraph Multi-Skill Architecture
 
-Example system context:
+```mermaid
+flowchart TD
+    User["Analyst Query + Ingested Context"] --> Supervisor["Supervisor Node (LangGraph Router)"]
+    Supervisor -->|Financial Queries| FinAgent["Financial Data & Calculation Skill"]
+    Supervisor -->|Filing / Evidence Search| DocAgent["Document RAG & Chunk Skill"]
+    Supervisor -->|Accounting Audits| QualAgent["Data Quality & Audit Skill"]
+    Supervisor -->|Chart / Comparison Requests| GenUIAgent["Generative UI Chart Skill"]
 
-```text
-Current company:
-Acme Corporation
+    FinAgent --> FinTools["SQL Facts + MetricCalculationService"]
+    DocAgent --> RagTools["pgvector Chunks (Company-Filtered)"]
+    QualAgent --> QualTools["Data Quality Issues + Audit Events"]
+    GenUIAgent --> WidgetTools["Pydantic Chart Validator + Auto-Correction"]
 
-Latest filing:
-FY2025 Annual Report
-
-Available periods:
-2021–2025
-
-Current page:
-Company Overview
+    FinTools --> Aggregator["Synthesis & Citation Formatter"]
+    RagTools --> Aggregator
+    QualTools --> Aggregator
+    WidgetTools --> Aggregator
+    Aggregator --> SSE["SSE Stream Output (Tokens + Status + Widgets)"]
 ```
+
+## SSE Streaming Protocol
+Endpoint: `POST /api/copilot/chat/stream`
+Emits real-time event frames:
+- `event: status` -> `{"step": "search", "message": "Searching FY2025 Debt Schedule for credit terms..."}`
+- `event: token` -> `{"content": "Acme Corp reported net debt of €840M..."}`
+- `event: widget` -> `{"widgetType": "chart", "spec": { ... validated Pydantic JSON ... }}`
+- `event: citations` -> `[{"document_id": 2, "page_number": 42, "displayed_page": "p. 42", "bounding_box": [120, 340, 500, 480]}]`
+- `event: done` -> `{"session_id": "...", "message_id": "..."}`
 
 ---
 
-# Copilot Tools
+# Copilot Tool Suite
 
-Beyond the previously proposed tools, I recommend:
+All tools operate deterministically or through constrained SQL/pgvector queries:
 
-### Company context
-
-```text
-get_company_profile()
-get_current_company_context()
-get_latest_filing()
-get_available_periods()
+### 1. Financial Data & Deterministic Calculations
+```python
+get_current_metric(company_id: int, metric_name: str, fiscal_year: Optional[int]) -> MetricValue
+get_company_metrics(company_id: int, fiscal_year: Optional[int]) -> List[MetricValue]
+get_metric_history(company_id: int, metric_name: str) -> List[HistoricalPoint]
+get_fact_lineage(company_id: int, metric_name: str, fiscal_year: int) -> MetricLineage
+calculate_custom_formula(expression: str, values: Dict[str, float]) -> CalculationResult
 ```
 
-### Financial data
-
-```text
-get_financial_fact()
-get_financial_facts()
-get_metric()
-get_metrics_history()
-compare_periods()
-compare_metrics()
+### 2. Document Search, RAG & Text Analytics
+```python
+search_filing_chunks(query: str, company_id: int, fiscal_year: Optional[int], section_filter: Optional[str], limit: int = 5) -> List[ChunkResult]
+get_page_content(document_id: int, page_number: int) -> PageDetails
+count_concept_frequency(company_id: int, terms: List[str], document_id: Optional[int]) -> Dict[str, int]
 ```
 
-### Dependency/evidence
-
-```text
-get_metric_inputs()
-get_metric_dependencies()
-get_source_evidence()
-get_source_location()
-get_original_filing_page()
+### 3. Data Quality & Audit Trail
+```python
+get_unverified_facts(company_id: int) -> List[UnverifiedFact]
+get_data_quality_issues(company_id: int) -> List[QualityIssue]
+get_fact_audit_trail(fact_id: int) -> List[AuditEvent]
 ```
 
-### Analysis
-
-```text
-calculate_metric()
-analyze_metric_change()
-identify_risk_drivers()
-explain_rating()
-compare_to_previous_period()
-find_anomalies()
+### 4. Generative UI Widget Generator & Validator
+```python
+generate_chart_widget(
+    chart_type: Literal["line", "bar", "pie", "word_cloud"],
+    title: str,
+    description: Optional[str],
+    series: List[ChartSeriesConfig],
+    data: List[Dict[str, Any]],
+    unit: Optional[str]
+) -> ChartWidgetPayload
 ```
+* **Validation & Self-Correction Loop**: If the LLM generates a malformed schema, the backend interceptor catches the `ValidationError` and feeds the exact schema error back into the agent context for an immediate automatic re-generation before streaming to the frontend.
 
-### Documents/RAG
-
-```text
-search_filings()
-search_filing_sections()
-search_evidence()
-retrieve_related_chunks()
-```
-
-### Data quality
-
-```text
-get_unverified_facts()
-get_corrections()
-get_data_quality_issues()
-get_reconciliation_issues()
-```
-
-### Historical reasoning
-
-```text
-get_metric_history()
-detect_trend()
-detect_inflection_points()
-compare_year_over_year()
-```
-
-This allows the agent to answer questions using deterministic tools rather than
-hallucinating values.
-
----
 
 # RAG Architecture
 

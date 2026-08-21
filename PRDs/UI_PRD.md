@@ -109,10 +109,39 @@ Real business logic mutation on `FinancialFactVersion`:
   - `validate_facts`: Accounting rule consistency check
   - `calculate_kpis`: Derive credit metrics
 
+### 3.6 Credit Underwriting Copilot Workbench
+An omnipresent assistant panel integrated globally across all screens:
+- **Global Resizable Shell**:
+  - Positioned as a persistent right drawer in `App.tsx` accessible on all views.
+  - Interactive horizontal drag handle enabling the user to dynamically resize the panel width between `360px` and `800px` (ideal for inspecting detailed charts).
+  - Quick-collapse and expand button with badge indicator.
+- **Dynamic Context Pill**:
+  - Displays currently ingested focus context at the top of the chat (e.g., `Focus: Acme Corp · Net Debt / EBITDA · 2 Input Facts (FY25 10-K & FY24 10-K)`).
+  - Eagerly updates when the user switches company, clicks a KPI card, opens the detail drawer with its constituent facts, or navigates document pages. Supports multiple referenced facts and citations across multiple documents simultaneously.
+- **Live Streaming & Human-Readable Reasoning**:
+  - SSE real-time token streaming with animated progress chips displaying human-friendly backend step descriptions (`"Searching filing debt schedule..."`, `"Calculating 5-year historical coverage..."`, `"Building chart visualization..."`).
+  - [Stop Generating] button to instantly cancel active stream via `AbortController`.
+- **Generative UI Native Widgets**:
+  - Renders native interactive Tailwind + Recharts visualization cards inline inside the chat stream:
+    - **Line Charts**: Multi-metric time-series trends (e.g. EBITDA Margin vs Debt/EBITDA over time).
+    - **Bar Charts**: Period-over-period or breakdown comparisons.
+    - **Pie / Donut Charts**: Capital structure or debt composition.
+    - **Word Cloud / Concept Frequency Cards**: Visualizing topical prominence across filings.
+  - **Full-Screen Modal Overlay**: A dedicated maximize / expand button on every chart widget opens a full-screen overlay for deep exploration, presentation, and high-resolution inspection.
+  - **Export Action**: High-resolution [Download PNG/SVG] action button on every chart widget (in-chat and in full-screen) for local use and presentation decks.
+- **Grounded PDF Citation Navigation**:
+  - Citations rendered as interactive badges (e.g., `[Annual Report 2025 · p. 42 (Debt Schedule)]`).
+  - Clicking any citation opens the Document Preview drawer, scrolls directly to physical page index, and paints a highlight box over the referenced bounding box.
+- **Multi-Session Management**:
+  - Top action bar with [New Chat] button (resets conversation history and context).
+  - Past conversations drawer enabling analysts to search and switch between historical chat sessions stored in PostgreSQL.
+
 ---
 
 ## 4. Error Handling & Edge States
 - **Missing / Unavailable Metrics**: Explicitly display `N/A` with explanation reason (e.g. `Interest expense not reported in filing`). Never substitute zero.
 - **API Disconnections**: Non-intrusive offline indicator with automatic retry.
 - **Validation Warnings**: Highlight discrepancies visually with warning badges and actionable links to the source fact.
+- **Malformed Widget Safeguard**: If an agent output contains malformed chart JSON, fallback gracefully to a tabular data view without crashing the UI.
+
 
