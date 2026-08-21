@@ -279,7 +279,7 @@ export const UploadView: React.FC<UploadViewProps> = ({ jobs, onUpload, onRemove
   const completedJobs = jobs.filter(j => j.state === 'success' || j.state === 'failed');
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto max-w-3xl mx-auto space-y-8 py-6">
+    <div className="flex-1 p-6 overflow-y-auto max-w-3xl mx-auto space-y-8 py-6 min-h-0 min-w-0">
       {/* View Header */}
       <div>
         <h2 className="text-2xl font-extrabold tracking-tight text-white">Upload Filing</h2>

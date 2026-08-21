@@ -272,10 +272,10 @@ export const KPIDetailDrawer: React.FC<KPIDetailDrawerProps> = ({
     <div
       onWheel={e => e.stopPropagation()}
       onTouchMove={e => e.stopPropagation()}
-      className="fixed inset-0 z-50 overflow-hidden overscroll-contain bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-0 lg:p-4 transition-opacity animate-in fade-in duration-200"
+      className="absolute inset-0 z-20 overflow-hidden bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-0 lg:p-2 transition-opacity animate-in fade-in duration-200"
     >
       {/* Outer Modal Container */}
-      <div className="w-full h-full max-w-[1720px] bg-slate-900 border-0 lg:border border-slate-800 lg:rounded-2xl overflow-hidden flex flex-col shadow-2xl overscroll-contain">
+      <div className="w-full h-full bg-slate-900 border-0 lg:border border-slate-800 lg:rounded-2xl overflow-hidden flex flex-col shadow-2xl overscroll-contain">
 
         {/* Mobile View Toggle Bar (visible only on small screens) */}
         <div className="flex lg:hidden bg-slate-900 border-b border-slate-800 px-4 py-2 justify-between items-center">

@@ -49,9 +49,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   isSubmittingCorrection,
 }) => {
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden relative min-h-0 min-w-0">
       {/* Main Analysis Canvas */}
-      <main className="flex-1 p-6 overflow-y-auto space-y-6">
+      <main className="flex-1 p-6 overflow-y-auto space-y-6 min-h-0 min-w-0">
         {/* Company Header Banner */}
         <CompanyBanner summary={companySummary} />
 
