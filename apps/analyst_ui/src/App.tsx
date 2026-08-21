@@ -182,8 +182,12 @@ export default function App() {
           messages={copilotController.messages}
           isStreaming={copilotController.isStreaming}
           currentReasoningStatus={copilotController.currentReasoningStatus}
+          turnCount={copilotController.turnCount}
+          maxTurns={copilotController.maxTurns}
+          isTurnLimitReached={copilotController.isTurnLimitReached}
           onSendMessage={copilotController.sendMessage}
           onAbortStream={copilotController.abortStream}
+          onSubmitFeedback={copilotController.submitFeedback}
           onNewSession={copilotController.createNewSession}
           sessions={copilotController.sessions}
           activeSessionId={copilotController.activeSessionId}
