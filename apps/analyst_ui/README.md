@@ -41,6 +41,7 @@ flowchart TB
         M_Metric["metric.ts (MetricItem, Lineage, Formatters)"]
         M_Fact["fact.ts (FinancialFact, Correction Schemas)"]
         M_Pipe["pipeline.ts (PipelineJob, Task Steps)"]
+        M_Copilot["copilot.ts (CopilotMessage, Widget, Citation)"]
         end
 
         subgraph Controllers["Controllers (State Hooks & API Clients)"]
@@ -49,6 +50,7 @@ flowchart TB
         C_Metric["useMetricsController"]
         C_Fact["useFactsController"]
         C_Pipe["usePipelineController"]
+        C_Copilot["useCopilotController (Sessions, Drag, SSE)"]
         end
 
         subgraph Views["Views (Presentational & Compound Components)"]
@@ -57,7 +59,8 @@ flowchart TB
         V_Grid["KPIGrid.tsx / KPICard.tsx"]
         V_Drawer["KPIDetailDrawer.tsx"]
         V_Modal["DataCorrectionModal.tsx"]
-        V_Copilot["CopilotPanel.tsx"]
+        V_Copilot["CopilotPanel.tsx (Resizable Drawer)"]
+        V_Widgets["copilot/ChartWidgetRenderer.tsx (GenUI)"]
         V_Upload["UploadView.tsx"]
         V_Dash["DashboardView.tsx"]
         end
@@ -341,6 +344,54 @@ sequenceDiagram
     Note over C_Pipe: When all tasks reach "success":
     C_Pipe->>C_Pipe: Mark job as "success"
     C_Pipe->>App: Callback triggers refreshCompanies(), refreshFacts(), refreshMetrics()
+```
+
+---
+
+### Workflow 6: Omnipresent Copilot Interaction, GenUI Charts & Grounded Citations
+
+When an analyst interacts with the global Copilot drawer from any screen:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Analyst
+    participant Copilot as CopilotPanel (Resizable Drawer)
+    participant C_Copilot as useCopilotController
+    participant App as App.tsx (Coordinator)
+    participant API as FastAPI Backend (/api/copilot/chat/stream)
+    participant Preview as DocumentPreviewPanel (Modal Overlay)
+
+    Analyst->>Copilot: Drags left border to expand panel (e.g. 520px)
+    Copilot->>C_Copilot: setWidth(520) (persists to localStorage)
+
+    Analyst->>Copilot: Submits prompt ("Compare 5-year leverage vs margin in a chart")
+    Copilot->>C_Copilot: sendMessage(prompt)
+    C_Copilot->>App: Aggregates active contextSnapshot (Company, Active KPI, Facts, Doc Page)
+    C_Copilot->>API: POST /api/copilot/chat/stream {message, context, session_id}
+
+    loop SSE Event Streaming
+        API-->>C_Copilot: event: status ("Running deterministic ratio calculations...")
+        C_Copilot->>Copilot: Renders live animated reasoning chip
+        API-->>C_Copilot: event: token ("Based on financial filings for Acme...")
+        C_Copilot->>Copilot: Streams assistant response text
+        API-->>C_Copilot: event: widget (Pydantic-validated Recharts JSON spec)
+        C_Copilot->>Copilot: Instantiates native interactive ChartWidgetRenderer
+        API-->>C_Copilot: event: citations (Document ID, Page 42, Bounding Box)
+        C_Copilot->>Copilot: Displays interactive citation badges
+    end
+
+    opt Full-Screen Exploration & Export
+        Analyst->>Copilot: Clicks [Maximize] on chart widget
+        Copilot->>Copilot: Opens Full-Screen Modal backdrop with high-res Recharts view
+        Analyst->>Copilot: Clicks [Download PNG] -> Canvas exports high-res chart image
+    end
+
+    opt Grounded Evidence Inspection
+        Analyst->>Copilot: Clicks citation [Annual Report 2025 · p. 42]
+        Copilot->>App: onOpenCitation(citation)
+        App->>Preview: Opens Grounded Citation Modal directly at Page 42 with bounding box highlight
+    end
 ```
 
 ---
