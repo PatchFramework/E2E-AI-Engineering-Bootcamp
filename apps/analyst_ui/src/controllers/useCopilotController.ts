@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   CopilotMessage,
   CopilotContextSnapshot,
@@ -6,10 +6,12 @@ import {
   CopilotCitation,
   CopilotWidget,
 } from '../models/copilot';
+import { apiClient, getApiBaseUrl } from './apiClient';
 
 const STORAGE_KEY_WIDTH = 'agy_copilot_drawer_width';
 const STORAGE_KEY_SESSIONS = 'agy_copilot_sessions';
 const STORAGE_KEY_MESSAGES = 'agy_copilot_messages';
+const MAX_CONVERSATION_TURNS = 10;
 
 export function useCopilotController(
   contextSnapshot: CopilotContextSnapshot,
@@ -75,14 +77,105 @@ export function useCopilotController(
     localStorage.setItem(STORAGE_KEY_MESSAGES, JSON.stringify(messagesBySession));
   }, [messagesBySession]);
 
-  const currentMessages = messagesBySession[activeSessionId] || [
-    {
-      id: 'welcome-msg',
-      role: 'assistant',
-      content: `Hello Analyst! I am your **Credit Underwriting Copilot**.\n\nI have continuous context of **${contextSnapshot.companyName || 'the active company'}** and can query structured financial facts, run deterministic formulas, retrieve filing evidence chunks, or generate interactive charts. How can I assist your underwriting workflow today?`,
-      createdAt: new Date().toISOString(),
-    },
-  ];
+  // Fetch backend chat sessions on mount or when companyId changes
+  useEffect(() => {
+    let isCancelled = false;
+    async function loadBackendSessions() {
+      try {
+        const queryParam = contextSnapshot.companyId ? `?company_id=${contextSnapshot.companyId}` : '';
+        const backendSessions = await apiClient.get<any[]>(`/api/copilot/sessions${queryParam}`);
+        if (!isCancelled && Array.isArray(backendSessions) && backendSessions.length > 0) {
+          const mapped: ChatSessionSummary[] = backendSessions.map(s => ({
+            id: s.id,
+            title: s.title || 'Conversation',
+            companyId: s.company_id ?? null,
+            createdAt: s.created_at || new Date().toISOString(),
+            updatedAt: s.updated_at || new Date().toISOString(),
+          }));
+          setSessions(prev => {
+            const combined = [...mapped];
+            for (const p of prev) {
+              if (!combined.some(c => c.id === p.id)) {
+                combined.push(p);
+              }
+            }
+            return combined;
+          });
+        }
+      } catch {
+        // Backend offline or running in mock dev mode
+      }
+    }
+    loadBackendSessions();
+    return () => {
+      isCancelled = true;
+    };
+  }, [contextSnapshot.companyId]);
+
+  // Fetch backend messages when switching to an active session
+  useEffect(() => {
+    let isCancelled = false;
+    async function loadSessionMessages() {
+      if (!activeSessionId || activeSessionId.startsWith('session-default') || activeSessionId.startsWith('session-')) {
+        return;
+      }
+      try {
+        const backendMsgs = await apiClient.get<any[]>(`/api/copilot/sessions/${activeSessionId}/messages`);
+        if (!isCancelled && Array.isArray(backendMsgs) && backendMsgs.length > 0) {
+          const mapped: CopilotMessage[] = backendMsgs.map(m => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant' | 'system',
+            content: m.content || '',
+            toolCalls: m.tool_calls,
+            citations: m.citations
+              ? (m.citations as any[]).map(c => ({
+                  documentId: c.documentId ?? c.document_id ?? 1,
+                  filename: c.filename || 'Filing.pdf',
+                  pageNumber: c.pageNumber ?? c.page_number ?? 1,
+                  displayedPage: c.displayedPage ?? c.displayed_page ?? `p. ${c.page_number ?? 1}`,
+                  section: c.section,
+                  snippet: c.snippet,
+                  boundingBox: c.boundingBox ?? c.bounding_box,
+                }))
+              : undefined,
+            widgets: m.widgets,
+            contextSnapshot: m.context_snapshot,
+            createdAt: m.created_at || new Date().toISOString(),
+          }));
+          setMessagesBySession(prev => ({
+            ...prev,
+            [activeSessionId]: mapped,
+          }));
+        }
+      } catch {
+        // Fallback to local storage state
+      }
+    }
+    loadSessionMessages();
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeSessionId]);
+
+  const currentMessages = useMemo(() => {
+    return messagesBySession[activeSessionId] || [
+      {
+        id: 'welcome-msg',
+        role: 'assistant',
+        content: `Hello Analyst! I am your **Credit Underwriting Copilot**.\n\nI have continuous context of **${contextSnapshot.companyName || 'the active company'}** and can query structured financial facts, run deterministic formulas, retrieve filing evidence chunks, or generate interactive charts. How can I assist your underwriting workflow today?`,
+        createdAt: new Date().toISOString(),
+      },
+    ];
+  }, [messagesBySession, activeSessionId, contextSnapshot.companyName]);
+
+  // Turn budgeting: count user messages in current session
+  const turnCount = useMemo(() => {
+    return currentMessages.filter(m => m.role === 'user').length;
+  }, [currentMessages]);
+
+  const isTurnLimitReached = useMemo(() => {
+    return turnCount >= MAX_CONVERSATION_TURNS;
+  }, [turnCount]);
 
   // Set message list for current session
   const setMessagesForCurrentSession = useCallback(
@@ -106,17 +199,31 @@ export function useCopilotController(
   );
 
   // Create a fresh new chat session
-  const createNewSession = useCallback(() => {
+  const createNewSession = useCallback(async () => {
     if (isStreaming && abortControllerRef.current) {
       abortControllerRef.current.abort();
       setIsStreaming(false);
       setCurrentReasoningStatus(null);
     }
 
-    const newId = `session-${Date.now()}`;
+    let newId = `session-${Date.now()}`;
+    const newTitle = `Conversation ${sessions.length + 1}`;
+
+    try {
+      const backendSession = await apiClient.post<any>('/api/copilot/sessions', {
+        company_id: contextSnapshot.companyId,
+        title: newTitle,
+      });
+      if (backendSession && backendSession.id) {
+        newId = backendSession.id;
+      }
+    } catch {
+      // Offline fallback
+    }
+
     const newSession: ChatSessionSummary = {
       id: newId,
-      title: `Conversation ${sessions.length + 1}`,
+      title: newTitle,
       companyId: contextSnapshot.companyId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -130,7 +237,7 @@ export function useCopilotController(
         {
           id: `welcome-${newId}`,
           role: 'assistant',
-          content: `New session started with active context for **${contextSnapshot.companyName || 'Company'}**.\nAsk any question about debt structure, cash flow, credit ratings, or filing evidence citations.`,
+          content: `New session started with active context for **${contextSnapshot.companyName || 'Company'}**.\nAsk any question about debt structure, cash flow, credit ratings, or filing evidence citations. (Max ${MAX_CONVERSATION_TURNS} turns per session).`,
           createdAt: new Date().toISOString(),
         },
       ],
@@ -143,19 +250,55 @@ export function useCopilotController(
   }, []);
 
   // Stop/Abort streaming
-  const handleAbort = useCallback(() => {
+  const handleAbort = useCallback(async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+    }
+    try {
+      await apiClient.post('/api/copilot/chat/abort');
+    } catch {
+      // Ignore network abort error
     }
     setIsStreaming(false);
     setCurrentReasoningStatus(null);
   }, []);
 
-  // Send message & handle streaming response
+  // Submit feedback rating / comments for an assistant message
+  const submitFeedback = useCallback(
+    async (messageId: string, runId: string | undefined, score: 1 | -1, comment?: string) => {
+      // Optimistically update message rating in UI
+      setMessagesForCurrentSession(prev =>
+        prev.map(m =>
+          m.id === messageId
+            ? {
+                ...m,
+                userRating: score,
+                ratingComment: comment,
+              }
+            : m
+        )
+      );
+
+      const effectiveRunId = runId || messageId;
+      try {
+        await apiClient.post('/api/copilot/feedback', {
+          run_id: effectiveRunId,
+          score,
+          comment: comment || undefined,
+          feedback_type: 'user_rating',
+        });
+      } catch (err) {
+        console.warn('Could not post feedback to backend:', err);
+      }
+    },
+    [setMessagesForCurrentSession]
+  );
+
+  // Send message & handle SSE streaming response
   const sendMessage = useCallback(
     async (textToSend: string) => {
-      if (!textToSend.trim() || isStreaming) return;
+      if (!textToSend.trim() || isStreaming || isTurnLimitReached) return;
 
       const userMsgId = `user-${Date.now()}`;
       const userMsg: CopilotMessage = {
@@ -179,7 +322,7 @@ export function useCopilotController(
       );
 
       setIsStreaming(true);
-      setCurrentReasoningStatus('Analyzing question & active context...');
+      setCurrentReasoningStatus('Analyzing question & underwriting context...');
 
       const assistantMsgId = `asst-${Date.now()}`;
       const placeholderAssistantMsg: CopilotMessage = {
@@ -195,13 +338,16 @@ export function useCopilotController(
       abortControllerRef.current = controller;
 
       try {
-        // Attempt SSE streaming call to backend if available
-        const response = await fetch('/api/copilot/chat/stream', {
+        const baseUrl = getApiBaseUrl();
+        const streamUrl = `${baseUrl}/copilot/chat/stream`;
+
+        const response = await fetch(streamUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             session_id: activeSessionId,
             message: textToSend,
+            company_id: contextSnapshot.companyId,
             context: contextSnapshot,
           }),
           signal: controller.signal,
@@ -213,73 +359,154 @@ export function useCopilotController(
           let accumulatedContent = '';
           let citations: CopilotCitation[] = [];
           let widgets: CopilotWidget[] = [];
+          let activeRunId: string | undefined = undefined;
+          let buffer = '';
 
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split('\n\n');
+            buffer = events.pop() || ''; // Keep trailing incomplete event in buffer
 
-            for (const line of lines) {
-              if (line.startsWith('event: status')) {
-                const dataMatch = line.match(/data:\s*(.+)/);
-                if (dataMatch) {
-                  try {
-                    const parsed = JSON.parse(dataMatch[1]);
-                    setCurrentReasoningStatus(parsed.message || parsed.text || 'Processing...');
-                  } catch {
-                    // ignore
-                  }
+            for (const rawEvent of events) {
+              if (!rawEvent.trim()) continue;
+
+              const lines = rawEvent.split('\n');
+              let eventType = 'message';
+              let dataStr = '';
+
+              for (const line of lines) {
+                if (line.startsWith('event:')) {
+                  eventType = line.replace(/^event:\s*/, '').trim();
+                } else if (line.startsWith('data:')) {
+                  dataStr = line.replace(/^data:\s*/, '').trim();
                 }
-              } else if (line.startsWith('data: ')) {
-                const dataStr = line.replace('data: ', '').trim();
-                try {
-                  const parsed = JSON.parse(dataStr);
-                  if (parsed.content) {
-                    accumulatedContent += parsed.content;
-                  }
-                  if (parsed.citations) {
-                    citations = parsed.citations;
-                  }
-                  if (parsed.widget) {
-                    widgets.push(parsed.widget);
-                  }
-                  if (parsed.status) {
-                    setCurrentReasoningStatus(parsed.status);
-                  }
+              }
 
+              if (dataStr === '[DONE]') {
+                break;
+              }
+
+              let parsedData: any = null;
+              if (dataStr) {
+                try {
+                  parsedData = JSON.parse(dataStr);
+                } catch {
+                  parsedData = dataStr;
+                }
+              }
+
+              // 1. Trace Event (LangSmith Run UUID)
+              if (eventType === 'trace' && parsedData?.run_id) {
+                activeRunId = parsedData.run_id;
+                setMessagesForCurrentSession(prev =>
+                  prev.map(m => (m.id === assistantMsgId ? { ...m, runId: activeRunId } : m))
+                );
+              }
+
+              // 2. Status / Reasoning Chip Updates
+              else if (eventType === 'status' && parsedData) {
+                const statusMsg = typeof parsedData === 'string' ? parsedData : parsedData.message || parsedData.step || 'Processing...';
+                setCurrentReasoningStatus(statusMsg);
+              }
+
+              // 3. Widget Generative UI Event
+              else if (eventType === 'widget' && parsedData) {
+                widgets.push(parsedData);
+                setMessagesForCurrentSession(prev =>
+                  prev.map(m => (m.id === assistantMsgId ? { ...m, widgets: [...widgets] } : m))
+                );
+              }
+
+              // 4. Citations Evidence Array Event
+              else if (eventType === 'citations' && Array.isArray(parsedData)) {
+                citations = parsedData;
+                setMessagesForCurrentSession(prev =>
+                  prev.map(m => (m.id === assistantMsgId ? { ...m, citations } : m))
+                );
+              }
+
+              // 5. Done Event
+              else if (eventType === 'done' && parsedData) {
+                if (parsedData.message_id) {
                   setMessagesForCurrentSession(prev =>
                     prev.map(m =>
                       m.id === assistantMsgId
-                        ? {
-                            ...m,
-                            content: accumulatedContent || m.content,
-                            citations: citations.length > 0 ? citations : m.citations,
-                            widgets: widgets.length > 0 ? widgets : m.widgets,
-                          }
+                        ? { ...m, id: parsedData.message_id, runId: activeRunId || parsedData.message_id }
                         : m
                     )
                   );
-                } catch {
-                  if (dataStr && dataStr !== '[DONE]') {
-                    accumulatedContent += dataStr;
-                    setMessagesForCurrentSession(prev =>
-                      prev.map(m => (m.id === assistantMsgId ? { ...m, content: accumulatedContent } : m))
-                    );
-                  }
                 }
+              }
+
+              // 6. Error Event
+              else if (eventType === 'error' && parsedData) {
+                const errMsg = parsedData.error || 'Copilot encountered an error during reasoning.';
+                accumulatedContent += `\n\n> ⚠️ **Error**: ${errMsg}`;
+                setMessagesForCurrentSession(prev =>
+                  prev.map(m => (m.id === assistantMsgId ? { ...m, content: accumulatedContent } : m))
+                );
+              }
+
+              // 7. Standard Data Tokens / Chunks
+              else if (parsedData) {
+                if (typeof parsedData === 'object') {
+                  if (parsedData.content) {
+                    accumulatedContent += parsedData.content;
+                  }
+                  if (parsedData.citations) {
+                    citations = parsedData.citations;
+                  }
+                  if (parsedData.widget) {
+                    widgets.push(parsedData.widget);
+                  }
+                  if (parsedData.status) {
+                    setCurrentReasoningStatus(parsedData.status);
+                  }
+                } else if (typeof parsedData === 'string' && parsedData !== '[DONE]') {
+                  accumulatedContent += parsedData;
+                }
+
+                setMessagesForCurrentSession(prev =>
+                  prev.map(m =>
+                    m.id === assistantMsgId
+                      ? {
+                          ...m,
+                          content: accumulatedContent || m.content,
+                          runId: activeRunId || m.runId,
+                          citations: citations.length > 0 ? citations : m.citations,
+                          widgets: widgets.length > 0 ? widgets : m.widgets,
+                        }
+                      : m
+                  )
+                );
               }
             }
           }
         } else {
-          // Fallback rich simulation for standalone frontend testing
-          await simulateCopilotResponse(textToSend, contextSnapshot, assistantMsgId, setMessagesForCurrentSession, setCurrentReasoningStatus, controller.signal);
+          // Fallback rich simulation if backend stream endpoint is unreachable
+          await simulateCopilotResponse(
+            textToSend,
+            contextSnapshot,
+            assistantMsgId,
+            setMessagesForCurrentSession,
+            setCurrentReasoningStatus,
+            controller.signal
+          );
         }
       } catch (err: any) {
         if (err.name !== 'AbortError') {
-          // Trigger intelligent fallback simulation if backend stream endpoint is unmounted or in dev mode
-          await simulateCopilotResponse(textToSend, contextSnapshot, assistantMsgId, setMessagesForCurrentSession, setCurrentReasoningStatus, controller.signal);
+          // Intelligent fallback simulation if backend stream failed or unmounted
+          await simulateCopilotResponse(
+            textToSend,
+            contextSnapshot,
+            assistantMsgId,
+            setMessagesForCurrentSession,
+            setCurrentReasoningStatus,
+            controller.signal
+          );
         }
       } finally {
         setIsStreaming(false);
@@ -287,7 +514,7 @@ export function useCopilotController(
         abortControllerRef.current = null;
       }
     },
-    [activeSessionId, contextSnapshot, isStreaming, setMessagesForCurrentSession]
+    [activeSessionId, contextSnapshot, isStreaming, isTurnLimitReached, setMessagesForCurrentSession]
   );
 
   return {
@@ -301,8 +528,12 @@ export function useCopilotController(
     messages: currentMessages,
     isStreaming,
     currentReasoningStatus,
+    turnCount,
+    maxTurns: MAX_CONVERSATION_TURNS,
+    isTurnLimitReached,
     sendMessage,
     abortStream: handleAbort,
+    submitFeedback,
     createNewSession,
     switchSession,
     onOpenDocumentCitation,
@@ -338,7 +569,7 @@ async function simulateCopilotResponse(
     if (signal.aborted) return;
 
     replyText = `Based on financial filings for **${companyName}**, operating leverage has shifted from **3.10x** in FY2021 to **4.72x** in FY2025. Below is the multi-year trajectory of EBITDA Margin alongside Net Debt / EBITDA:`;
-    
+
     widgets = [
       {
         widgetType: 'chart',
