@@ -225,7 +225,8 @@ XCom outputs, and validation rules._
 - **PostgreSQL 16 with pgvector**:
   - `underwriting_db`: Primary application ledger with partial unique
     constraints (`ix_fact_versions_current_uniq`) ensuring exactly one active
-    version per fact.
+    version per fact, relational metric calculation lineages, and persisted
+    multi-session Copilot chat sessions & messages (`chat_sessions`, `chat_messages`).
   - `airflow_db`: Dedicated schema/database isolating Airflow metadata.
 - **MinIO S3**:
   - `filings` bucket:

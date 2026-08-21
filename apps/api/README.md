@@ -80,7 +80,7 @@ flowchart TB
 
 | Component in `docker-compose.yml` | Protocol & Port | API Integration Mechanism | API Role & Business Responsibilities |
 | :--- | :--- | :--- | :--- |
-| **`postgres`** (`pgvector/pgvector:pg16`) | TCP `5432` (`SQLAlchemy` / `psycopg2`) | `DATABASE_URL` connection pool with automatic Alembic migration on container startup | Stores relational domain models (`Company`, `Document`, `FinancialFact`, `FinancialFactVersion`, `DerivedMetricValue`, `DerivedMetricInputFact`, `DataQualityIssue`, `AuditEvent`) and pgvector embeddings (`DocumentChunk`). |
+| **`postgres`** (`pgvector/pgvector:pg16`) | TCP `5432` (`SQLAlchemy` / `psycopg2`) | `DATABASE_URL` connection pool with automatic Alembic migration on container startup | Stores relational domain models (`Company`, `Document`, `FinancialFact`, `FinancialFactVersion`, `DerivedMetricValue`, `DerivedMetricInputFact`, `DataQualityIssue`, `AuditEvent`, `ChatSession`, `ChatMessage`) and pgvector embeddings (`DocumentChunk`). |
 | **`minio`** (`minio/minio`) | HTTP `9000` (`boto3` S3 client) | `StorageService` configured via `S3_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Persists original PDF documents at `filings/{company_id}/{fiscal_year}_{fiscal_period}/...` and caches page rendered PNGs at `pages/{document_id}/page_{page_number}.png`. |
 | **`airflow-webserver`** (`apps/pipelines`) | HTTP `8080` (`httpx` Basic Auth) | `AirflowService` calling Airflow 2.x REST API (`/api/v1/dags/financial_ingestion_dag/...`) | Triggers ingestion DAG runs asynchronously with run metadata (`document_id`, `company_id`, `s3_path`), and allows the UI to poll task execution states in real-time. |
 | **`analyst-ui`** (`apps/analyst_ui`) | HTTP `8000` (FastAPI REST endpoints) | CORS-enabled JSON API exposing `/api/companies`, `/api/documents`, `/api/facts`, `/api/metrics`, `/api/pipeline` | Provides data backing for the interactive financial spread, PDF viewer with bounding boxes, metric lineage graphs, quality issue triage, and audit events. |
@@ -271,6 +271,9 @@ erDiagram
     DERIVED_METRIC_VALUES ||--o{ DERIVED_METRIC_INPUT_FACTS : explains_lineage
     DERIVED_METRIC_INPUT_FACTS }o--|| FINANCIAL_FACT_VERSIONS : sourced_from
 
+    COMPANIES ||--o{ CHAT_SESSIONS : has
+    CHAT_SESSIONS ||--o{ CHAT_MESSAGES : contains
+
     COMPANIES {
         int id PK
         string name UK
@@ -352,6 +355,27 @@ erDiagram
         int chunk_index
         text text_content
         vector embedding
+    }
+
+    CHAT_SESSIONS {
+        string id PK
+        int company_id FK
+        string title
+        boolean is_active
+        datetime created_at
+        datetime updated_at
+    }
+
+    CHAT_MESSAGES {
+        string id PK
+        string session_id FK
+        string role
+        text content
+        jsonb tool_calls
+        jsonb citations
+        jsonb widgets
+        jsonb context_snapshot
+        datetime created_at
     }
 ```
 
