@@ -8,11 +8,9 @@ import { KPICategoryTabs } from './components/KPICategoryTabs';
 import { KPIGrid } from './components/KPIGrid';
 import { KPIDetailDrawer } from './components/KPIDetailDrawer';
 import { DataCorrectionModal } from './components/DataCorrectionModal';
-import { CopilotPanel } from './components/CopilotPanel';
 
 interface DashboardViewProps {
   companySummary: CompanySummary;
-  activeCompanyId: number | null;
   metrics: MetricItem[];
   filteredMetrics: MetricItem[];
   activeTab: KPICategory;
@@ -33,7 +31,6 @@ interface DashboardViewProps {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   companySummary,
-  activeCompanyId,
   metrics,
   filteredMetrics,
   activeTab,
@@ -89,9 +86,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           onCorrect={onCorrectFact}
         />
       </main>
-
-      {/* Underwriting Copilot Sidebar */}
-      <CopilotPanel companySummary={companySummary} activeCompanyId={activeCompanyId} />
     </div>
   );
 };
+
