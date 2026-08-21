@@ -3,7 +3,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from api.core.database import engine
 from api.models.db_models import (
-    Company, Document, SourceLocation, FinancialFact, FinancialFactVersion
+    Company, Document, SourceLocation, FinancialFact, FinancialFactVersion,
+    ChatSession, ChatMessage
 )
 
 from sqlalchemy import create_engine, event
@@ -182,5 +183,94 @@ def test_check_constraints(db_session: Session):
     with pytest.raises(IntegrityError) as exc_info_origin:
         db_session.commit()
     db_session.rollback()
-    
+
     assert "origin" in str(exc_info_origin.value).lower()
+
+
+
+def test_chat_session_and_message_creation(db_session: Session):
+    company = Company(name="Chat Test Corp", ticker="CTC")
+    db_session.add(company)
+    db_session.commit()
+
+    # 1. Create a ChatSession
+    session = ChatSession(
+        company_id=company.id,
+        title="Leverage & Coverage Analysis"
+    )
+    db_session.add(session)
+    db_session.commit()
+
+    assert session.id is not None
+    assert len(session.id) == 36
+    assert session.title == "Leverage & Coverage Analysis"
+    assert session.is_active is True
+
+    # 2. Add user message
+    user_msg = ChatMessage(
+        session_id=session.id,
+        role="user",
+        content="Why did leverage increase in FY2025?",
+        context_snapshot={
+            "active_kpi": "net_debt_to_ebitda",
+            "active_document": "FY2025 Annual Report",
+            "page_number": 42
+        }
+    )
+    db_session.add(user_msg)
+
+    # 3. Add assistant message with tool calls, citations, and widget
+    assistant_msg = ChatMessage(
+        session_id=session.id,
+        role="assistant",
+        content="Net debt increased to €840M due to €120M in new long-term borrowings.",
+        tool_calls=[{"tool": "get_metric_history", "args": {"metric_name": "net_debt_to_ebitda"}}],
+        citations=[{
+            "document_id": 1,
+            "page_number": 42,
+            "displayed_page": "p. 42",
+            "bounding_box": [10.0, 20.0, 100.0, 50.0]
+        }],
+        widgets=[{
+            "widgetType": "chart",
+            "chartType": "line",
+            "title": "5-Year Leverage Trend",
+            "data": [{"year": 2024, "value": 3.2}, {"year": 2025, "value": 4.72}]
+        }]
+    )
+    db_session.add(assistant_msg)
+    db_session.commit()
+
+    # 4. Verify relations and JSON attributes
+    db_session.refresh(session)
+    assert len(session.messages) == 2
+    assert session.messages[0].role == "user"
+    assert session.messages[0].context_snapshot["active_kpi"] == "net_debt_to_ebitda"
+    assert session.messages[1].role == "assistant"
+    assert session.messages[1].citations[0]["displayed_page"] == "p. 42"
+    assert session.messages[1].widgets[0]["widgetType"] == "chart"
+
+
+def test_chat_session_cascade_deletion(db_session: Session):
+    company = Company(name="Cascade Chat Corp", ticker="CCC")
+    db_session.add(company)
+    db_session.commit()
+
+    session = ChatSession(company_id=company.id, title="Test Session")
+    db_session.add(session)
+    db_session.commit()
+
+    msg = ChatMessage(session_id=session.id, role="user", content="Hello Copilot")
+    db_session.add(msg)
+    db_session.commit()
+
+    session_id = session.id
+    msg_id = msg.id
+
+    # Deleting the session should delete the message
+    db_session.delete(session)
+    db_session.commit()
+
+    assert db_session.query(ChatSession).filter_by(id=session_id).first() is None
+    assert db_session.query(ChatMessage).filter_by(id=msg_id).first() is None
+

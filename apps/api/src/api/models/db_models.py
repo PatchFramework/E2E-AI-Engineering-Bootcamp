@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text, Index, CheckConstraint, text, JSON
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -21,6 +22,7 @@ class Company(Base):
     facts = relationship("FinancialFact", back_populates="company", cascade="all, delete-orphan")
     document_chunks = relationship("DocumentChunk", back_populates="company", cascade="all, delete-orphan")
     quality_issues = relationship("DataQualityIssue", back_populates="company", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="company", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -214,3 +216,34 @@ class AuditEvent(Base):
     new_value = Column(String)
     reason = Column(Text)
     correlation_id = Column(String, index=True)
+
+
+class ChatSession(Base):
+    __tablename__ = 'chat_sessions'
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    company_id = Column(Integer, ForeignKey('companies.id', ondelete='CASCADE'), nullable=True, index=True)
+    title = Column(String(255), nullable=False, default="New Conversation")
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    company = relationship("Company", back_populates="chat_sessions")
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.created_at")
+
+
+class ChatMessage(Base):
+    __tablename__ = 'chat_messages'
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), ForeignKey('chat_sessions.id', ondelete='CASCADE'), nullable=False, index=True)
+    role = Column(String(50), nullable=False)  # 'user', 'assistant', 'system'
+    content = Column(Text, nullable=False)
+    tool_calls = Column(JSONType, nullable=True)  # List of executed tools and parameters
+    citations = Column(JSONType, nullable=True)   # Referenced chunks, documents, page numbers, bounding boxes
+    widgets = Column(JSONType, nullable=True)     # Generative UI chart / table specifications
+    context_snapshot = Column(JSONType, nullable=True)  # Ingested UI context at invocation time
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("ChatSession", back_populates="messages")
+
