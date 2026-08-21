@@ -70,6 +70,7 @@ describe('CopilotPanel Component', () => {
     {
       id: 'msg-2',
       role: 'assistant',
+      runId: 'run-trace-123',
       content: 'Total debt increased to €1.2B while EBITDA remained steady at €178M.',
       citations: [
         {
@@ -111,7 +112,7 @@ describe('CopilotPanel Component', () => {
     },
   ];
 
-  it('renders Copilot panel with active context pill and messages', () => {
+  it('renders Copilot panel with active context pill, turn counter, and messages', () => {
     render(
       <CopilotPanel
         isOpen={true}
@@ -122,6 +123,8 @@ describe('CopilotPanel Component', () => {
         messages={sampleMessages}
         isStreaming={false}
         currentReasoningStatus={null}
+        turnCount={1}
+        maxTurns={10}
         onSendMessage={vi.fn()}
         onAbortStream={vi.fn()}
         onNewSession={vi.fn()}
@@ -133,6 +136,7 @@ describe('CopilotPanel Component', () => {
     );
 
     expect(screen.getAllByText('Underwriting Copilot').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Turn 1/10')).toBeInTheDocument();
     expect(screen.getByText('Acme Corporation')).toBeInTheDocument();
     expect(screen.getByText(/Metric: Net Debt \/ EBITDA/)).toBeInTheDocument();
     expect(screen.getByText('Explain why leverage increased in FY2025')).toBeInTheDocument();
@@ -179,6 +183,85 @@ describe('CopilotPanel Component', () => {
         displayedPage: 'p. 42',
       })
     );
+  });
+
+  it('handles thumbs up rating and comment submission', () => {
+    const handleSubmitFeedback = vi.fn();
+
+    render(
+      <CopilotPanel
+        isOpen={true}
+        onToggleOpen={vi.fn()}
+        width={420}
+        onWidthChange={vi.fn()}
+        contextSnapshot={contextSnapshot}
+        messages={sampleMessages}
+        isStreaming={false}
+        currentReasoningStatus={null}
+        onSendMessage={vi.fn()}
+        onAbortStream={vi.fn()}
+        onSubmitFeedback={handleSubmitFeedback}
+        onNewSession={vi.fn()}
+        sessions={sessions}
+        activeSessionId="session-1"
+        onSwitchSession={vi.fn()}
+      />
+    );
+
+    const thumbsUpBtn = screen.getByTitle('Thumbs Up (Accurate & Helpful)');
+    expect(thumbsUpBtn).toBeInTheDocument();
+
+    fireEvent.click(thumbsUpBtn);
+    expect(handleSubmitFeedback).toHaveBeenCalledWith('msg-2', 'run-trace-123', 1, undefined);
+
+    // Comment box opens
+    const commentInput = screen.getByPlaceholderText(/Optional feedback/i);
+    expect(commentInput).toBeInTheDocument();
+
+    fireEvent.change(commentInput, { target: { value: 'High accuracy on debt breakdown' } });
+    const submitFeedbackBtn = screen.getByRole('button', { name: /Submit Feedback/i });
+    fireEvent.click(submitFeedbackBtn);
+
+    expect(handleSubmitFeedback).toHaveBeenCalledWith('msg-2', 'run-trace-123', 1, 'High accuracy on debt breakdown');
+  });
+
+  it('enforces 10-turn cap warning and disables prompt input', () => {
+    const handleNewSession = vi.fn();
+
+    render(
+      <CopilotPanel
+        isOpen={true}
+        onToggleOpen={vi.fn()}
+        width={420}
+        onWidthChange={vi.fn()}
+        contextSnapshot={contextSnapshot}
+        messages={sampleMessages}
+        isStreaming={false}
+        currentReasoningStatus={null}
+        turnCount={10}
+        maxTurns={10}
+        isTurnLimitReached={true}
+        onSendMessage={vi.fn()}
+        onAbortStream={vi.fn()}
+        onNewSession={handleNewSession}
+        sessions={sessions}
+        activeSessionId="session-1"
+        onSwitchSession={vi.fn()}
+      />
+    );
+
+    // Turn limit banner
+    expect(screen.getByText(/Turn Limit Reached \(10\/10\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/You have reached the maximum of 10 conversational turns/i)).toBeInTheDocument();
+
+    // Input disabled
+    const input = screen.getByPlaceholderText(/Maximum turns reached \(10\/10\)/i) as HTMLInputElement;
+    expect(input).toBeDisabled();
+
+    // Start New Chat button inside warning banner
+    const startNewChatBtn = screen.getByRole('button', { name: /Start New Chat/i });
+    fireEvent.click(startNewChatBtn);
+    expect(handleNewSession).toHaveBeenCalledTimes(1);
   });
 
   it('displays live reasoning status during streaming and handles stop', () => {
