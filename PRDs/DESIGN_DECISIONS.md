@@ -95,29 +95,41 @@ any conflicting notes in the original drafts.
   - **Details**: The Copilot is elevated to the global application layout (`App.tsx`), accessible on all screens with a horizontal drag-to-resize handle (dynamic width between 360px and 800px) and a toggle-to-collapse trigger.
   - **Rationale**: Analysts need side-by-side access to the Copilot during filing uploads, KPI inspection, and fact corrections. Resizing allows expanding the panel when viewing complex dynamic data visualizations.
 
-- **Decision**: Eager Minimal Context Ingestion + On-Demand Retrieval.
-  - **Details**: The UI automatically injects active navigation state, active company, open KPI/facts, and open document/page pointers in the chat request. Detailed data is NOT dumped into the prompt; instead, the agent is equipped with deterministic tools to query relevant facts, chunks, and history dynamically.
-  - **Rationale**: Keeps prompt token usage lean and eliminates hallucinated or stale context while empowering the agent to fetch precise records.
+- **Decision**: Orchestrator-Subagent Graph Architecture with Context-on-Demand.
+  - **Details**: 
+    - The copilot is built as a LangGraph orchestrator agent that plans multi-step executions and delegates to specialized sub-agents (`FinancialMetricAgent`, `AgenticRAGAgent`, `DataQualityAgent`, `GenUIWidgetAgent`) or directly answers conversational questions (`DIRECT_ANSWER`).
+    - Tool schemas are strictly compartmentalized inside their respective sub-agents to avoid LLM tool overchoice and context bloat.
+    - Active UI context (`contextSnapshot`: active KPI, active facts, active documents) is stored in graph state metadata on demand, rather than dumped in the system prompt.
+  - **Rationale**: Handles complex composite queries (e.g., "Analyze EBITDA and Debt trends for 5 years, then create a bar chart") cleanly while keeping tool schemas focused and token usage minimal.
 
-- **Decision**: LangGraph Multi-Skill Architecture with LangSmith Tracing.
-  - **Details**: Copilot backend is organized as a LangGraph state graph with a supervisor node and specialized skills (Document/RAG, Financial Analysis, Data Quality/Audit, Dynamic Dashboard Builder). All runs are traced in LangSmith with metadata tags (`company_id`, `session_id`).
-  - **Rationale**: Modular, inspectable tool routing prevents tool-selection confusion and ensures complete auditability of reasoning steps.
+- **Decision**: Agentic Hybrid RAG with Keyword/Dense Weighting & Tunable Scope.
+  - **Details**: Vector search in `pgvector` is upgraded to Agentic Hybrid RAG where the agent can dynamically tune semantic vs. exact keyword matching (BM25/PostgreSQL full-text) and set retrieval bounds (`limit`, `section_filter`). Exact keyword search is used for term frequency and word cloud generation.
+  - **Rationale**: Certain underwriting questions require exact debt covenant keyword matches, while others require high-level conceptual thematic similarity.
 
-- **Decision**: Deterministic Financial Tools over LLM Arithmetic.
-  - **Details**: All numerical evaluations, metric histories, single-metric checks, formula resolutions, and accounting aggregations are executed via deterministic Python services (`MetricCalculationService`) and database queries.
-  - **Rationale**: LLMs are unreliable at arithmetic. Strict separation guarantees 100% mathematical accuracy.
+- **Decision**: LangSmith Prompt Hub Integration, Versioning & Feedback Propagation.
+  - **Details**: All system and agent prompts are pulled dynamically from the LangSmith Prompt Hub (with version pinning and in-memory caching) with an embedded local fallback prompt for offline resilience. Tracing captures `company_id`, `session_id`, `user_id`, and `active_metric`. User thumbs up/down and fact corrections propagate directly to LangSmith trace runs.
+  - **Rationale**: Enables prompt experimentation, prompt evaluation datasets, and end-to-end trace auditing.
+
+- **Decision**: Grounded Citations & Pydantic Source Schema.
+  - **Details**: All retrieved context, SQL facts, and filing chunks are structured via a Pydantic `CitationSource` schema with exact page numbers, displayed page numbers, and bounding-box coordinates. Citations are emitted both inline and as a complete structured appendix in the SSE event payload for analyst verification.
+  - **Rationale**: Ensures complete, verifiable evidence provenance and zero hallucinated sources.
 
 - **Decision**: Generative UI Native Widgets with Pydantic Validation & Image Export.
-  - **Details**: For visual answers, the agent produces structured JSON widget specifications (Line charts, Bar charts, Pie charts, Word Clouds / Concept Frequency). Specs are validated against strict Pydantic schemas with automatic LLM self-correction retries if malformed. The frontend renders them with Recharts and provides one-click PNG/SVG download.
+  - **Details**: For visual answers, the agent produces structured JSON widget specifications (Line charts, Bar charts, Pie charts, Word Clouds). Specs are validated against strict Pydantic schemas in a dedicated graph validation node with automatic LLM self-correction retries if malformed. The frontend renders them with Recharts and provides one-click PNG/SVG download.
   - **Rationale**: Delivers interactive, responsive native visualizations without arbitrary code execution risks, with guaranteed schema safety and exportability.
 
-- **Decision**: Grounded PDF Citations & Bounding-Box Navigation.
-  - **Details**: Every factual claim and financial fact used by the agent includes structured citation metadata (`document_id`, `page_number`, `bounding_box`). Clicking any citation in the chat navigates the UI document preview directly to the target page and highlights the bounding box.
-  - **Rationale**: Maintains the core product pillar of complete evidence provenance and zero ungrounded assertions.
+- **Decision**: Conversation Token Budgeting, State Pruning & Graph Cancellation.
+  - **Details**:
+    - LangGraph state pruning cleans out intermediate tool execution payloads older than 3 turns.
+    - Active conversation context is capped at 10 turns per session.
+    - Strict `company_id` parameter injection is enforced across all graph subagents and database queries.
+    - Client UI disconnects / stop actions propagate directly to graph task cancellation.
+  - **Rationale**: Prevents token limit exhaustion, guarantees multi-tenant isolation, and prevents runaway cloud LLM costs.
 
 - **Decision**: SSE Streaming, Human-Friendly Reasoning States & PostgreSQL Session Persistence.
   - **Details**: The agent communicates over Server-Sent Events (SSE), streaming tokens and human-friendly reasoning step updates (`"Searching filing debt schedule..."`, `"Calculating 5-year leverage history..."`). Analysts can abort active generations, start fresh chat sessions, and switch between past conversations persisted in PostgreSQL (`chat_sessions`, `chat_messages`).
   - **Rationale**: Delivers high responsiveness, clear visibility into backend tool executions, and audit-compliant conversation tracking.
+
 
 
 

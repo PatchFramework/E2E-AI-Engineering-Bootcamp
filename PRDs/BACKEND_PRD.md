@@ -1,27 +1,34 @@
 # AI Copilot Backend Architecture & Tools
 
-The Underwriting Copilot is implemented as an orchestrated **LangGraph StateGraph** leveraging **LangSmith tracing**, deterministic calculation tools, hybrid pgvector retrieval, and validated Generative UI widget output.
+The Underwriting Copilot is implemented as an orchestrated **LangGraph Orchestrator-Subagent Graph** leveraging **LangSmith prompt versioning & tracing**, deterministic calculation tools, agentic hybrid pgvector retrieval, and validated Generative UI widget output.
 
-## LangGraph Multi-Skill Architecture
+## LangGraph Orchestrator-Subagent Architecture
 
 ```mermaid
 flowchart TD
-    User["Analyst Query + Ingested Context"] --> Supervisor["Supervisor Node (LangGraph Router)"]
-    Supervisor -->|Financial Queries| FinAgent["Financial Data & Calculation Skill"]
-    Supervisor -->|Filing / Evidence Search| DocAgent["Document RAG & Chunk Skill"]
-    Supervisor -->|Accounting Audits| QualAgent["Data Quality & Audit Skill"]
-    Supervisor -->|Chart / Comparison Requests| GenUIAgent["Generative UI Chart Skill"]
-
+    User["Analyst Query + Ingested Context Snapshot"] --> Orchestrator["Orchestrator Agent (LangGraph Plan & Route)"]
+    
+    Orchestrator -->|Direct Answer / Greeting| DirectResponse["Direct Answer Synthesizer"]
+    Orchestrator -->|Decompose Plan / Metrics| FinAgent["Financial Metric Sub-Agent"]
+    Orchestrator -->|Filing Research / Risk Factors| DocAgent["Agentic RAG Sub-Agent"]
+    Orchestrator -->|Accounting Reconciliations| QualAgent["Data Quality & Audit Sub-Agent"]
+    
     FinAgent --> FinTools["SQL Facts + MetricCalculationService"]
-    DocAgent --> RagTools["pgvector Chunks (Company-Filtered)"]
+    DocAgent --> RagTools["Agentic Hybrid Search (BM25 + pgvector)"]
     QualAgent --> QualTools["Data Quality Issues + Audit Events"]
-    GenUIAgent --> WidgetTools["Pydantic Chart Validator + Auto-Correction"]
-
-    FinTools --> Aggregator["Synthesis & Citation Formatter"]
-    RagTools --> Aggregator
-    QualTools --> Aggregator
-    WidgetTools --> Aggregator
-    Aggregator --> SSE["SSE Stream Output (Tokens + Status + Widgets)"]
+    
+    FinTools --> GenUIAgent["Generative UI Chart Sub-Agent"]
+    RagTools --> GenUIAgent
+    
+    GenUIAgent --> WidgetValidator["Pydantic Chart Validator & Self-Correction Node"]
+    
+    FinTools --> Synthesis["Synthesis, Citations & Appendix Builder"]
+    RagTools --> Synthesis
+    QualTools --> Synthesis
+    WidgetValidator --> Synthesis
+    DirectResponse --> Synthesis
+    
+    Synthesis --> SSE["SSE Stream Output (Tokens + Status + Widgets + Citations)"]
 ```
 
 ## SSE Streaming Protocol
@@ -30,16 +37,17 @@ Emits real-time event frames:
 - `event: status` -> `{"step": "search", "message": "Searching FY2025 Debt Schedule for credit terms..."}`
 - `event: token` -> `{"content": "Acme Corp reported net debt of €840M..."}`
 - `event: widget` -> `{"widgetType": "chart", "spec": { ... validated Pydantic JSON ... }}`
-- `event: citations` -> `[{"document_id": 2, "page_number": 42, "displayed_page": "p. 42", "bounding_box": [120, 340, 500, 480]}]`
+- `event: citations` -> `[{"document_id": 2, "page_number": 42, "displayed_page": "p. 42", "bounding_box": [120, 340, 500, 480], "snippet": "..."}]`
+- `event: trace` -> `{"run_id": "langsmith-run-uuid"}`
 - `event: done` -> `{"session_id": "...", "message_id": "..."}`
 
 ---
 
-# Copilot Tool Suite
+# Copilot Tool Suite & Sub-Agent Schemas
 
-All tools operate deterministically or through constrained SQL/pgvector queries:
+All tools operate deterministically or through constrained SQL/pgvector queries with strict parameter injection (`company_id` is locked in graph state):
 
-### 1. Financial Data & Deterministic Calculations
+### 1. Financial Data & Deterministic Calculations (Financial Metric Sub-Agent)
 ```python
 get_current_metric(company_id: int, metric_name: str, fiscal_year: Optional[int]) -> MetricValue
 get_company_metrics(company_id: int, fiscal_year: Optional[int]) -> List[MetricValue]
@@ -48,21 +56,30 @@ get_fact_lineage(company_id: int, metric_name: str, fiscal_year: int) -> MetricL
 calculate_custom_formula(expression: str, values: Dict[str, float]) -> CalculationResult
 ```
 
-### 2. Document Search, RAG & Text Analytics
+### 2. Agentic Hybrid Document Retrieval & Text Analytics (Agentic RAG Sub-Agent)
 ```python
-search_filing_chunks(query: str, company_id: int, fiscal_year: Optional[int], section_filter: Optional[str], limit: int = 5) -> List[ChunkResult]
+search_filing_chunks_hybrid(
+    query: str, 
+    company_id: int, 
+    fiscal_year: Optional[int] = None, 
+    section_filter: Optional[str] = None, 
+    dense_weight: float = 0.5,       # 1.0 = pure vector cosine, 0.0 = pure keyword BM25/tsvector
+    keyword_query: Optional[str] = None,
+    limit: int = 5                   # Agent dynamically tunes retrieval budget (1 to 15)
+) -> List[GroundedChunkResult]
+
 get_page_content(document_id: int, page_number: int) -> PageDetails
-count_concept_frequency(company_id: int, terms: List[str], document_id: Optional[int]) -> Dict[str, int]
+count_concept_frequency(company_id: int, terms: List[str], document_id: Optional[int] = None) -> Dict[str, int]
 ```
 
-### 3. Data Quality & Audit Trail
+### 3. Data Quality & Audit Trail (Data Quality Sub-Agent)
 ```python
 get_unverified_facts(company_id: int) -> List[UnverifiedFact]
 get_data_quality_issues(company_id: int) -> List[QualityIssue]
 get_fact_audit_trail(fact_id: int) -> List[AuditEvent]
 ```
 
-### 4. Generative UI Widget Generator & Validator
+### 4. Generative UI Widget Generator & Pydantic Validator Node (GenUI Sub-Agent)
 ```python
 generate_chart_widget(
     chart_type: Literal["line", "bar", "pie", "word_cloud"],
@@ -73,14 +90,28 @@ generate_chart_widget(
     unit: Optional[str]
 ) -> ChartWidgetPayload
 ```
-* **Validation & Self-Correction Loop**: If the LLM generates a malformed schema, the backend interceptor catches the `ValidationError` and feeds the exact schema error back into the agent context for an immediate automatic re-generation before streaming to the frontend.
+* **Validation & Self-Correction Node**: Validates series keys, data keys, and palettes. If `ValidationError` is encountered, it is reflected back into the agent context for an immediate automatic 1-retry regeneration before failing to a table fallback.
 
+### 5. Grounded Citation & Evidence Provenance Schema
+```python
+class CitationSource(BaseModel):
+    document_id: int
+    filename: str
+    page_number: int
+    displayed_page: str
+    section: Optional[str] = None
+    snippet: Optional[str] = None
+    bounding_box: Optional[List[float]] = None
+    confidence_score: Optional[float] = None
+    source_type: Literal["FILING_CHUNK", "STRUCTURED_FACT", "AUDIT_EVENT"]
+```
+All sources retrieved by any sub-agent are automatically tracked in the graph state's `retrieved_sources` registry and appended to the final response envelope for analyst inspection.
 
-# RAG Architecture
+---
 
-RAG should complement structured retrieval.
+# RAG Architecture (Agentic Hybrid Search)
 
-Use hybrid retrieval:
+RAG complements structured retrieval through an **Agentic Hybrid Retrieval** strategy:
 
 ```text
 User question
