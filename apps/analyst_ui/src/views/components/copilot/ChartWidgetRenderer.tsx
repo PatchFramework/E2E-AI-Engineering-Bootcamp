@@ -43,15 +43,20 @@ const formatCompactAxis = (val: any) => {
 };
 
 export const ChartWidgetRenderer: React.FC<ChartWidgetRendererProps> = ({ widget }) => {
+  const isTableWidget = widget.widgetType === 'table';
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showTable, setShowTable] = useState(false);
+  const [showTable, setShowTable] = useState(isTableWidget);
   const chartViewportRef = useRef<HTMLDivElement>(null);
 
   const series = widget.series && widget.series.length > 0
     ? widget.series
     : [{ key: 'value', label: 'Value', color: '#38bdf8' }];
 
-  const data = widget.data || [];
+  const data = widget.rows && widget.rows.length > 0 ? widget.rows : (widget.data || []);
+  const columns = widget.columns && widget.columns.length > 0
+    ? widget.columns
+    : (data.length > 0 ? Object.keys(data[0]) : []);
+
 
   // Export source data table as CSV
   const handleExportCSV = () => {
@@ -159,13 +164,13 @@ export const ChartWidgetRenderer: React.FC<ChartWidgetRendererProps> = ({ widget
   };
 
   const renderChartContent = (heightClass = 'h-52') => {
-    if (showTable) {
+    if (showTable || isTableWidget) {
       return (
         <div className={`${heightClass} overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/90 p-2`}>
           <table className="w-full text-[11px] text-left text-slate-300">
             <thead className="text-[10px] uppercase bg-slate-900 text-slate-400 border-b border-slate-800 sticky top-0">
               <tr>
-                {data.length > 0 && Object.keys(data[0]).map(key => (
+                {columns.map(key => (
                   <th key={key} className="px-2.5 py-1.5 font-semibold">{key}</th>
                 ))}
               </tr>
@@ -173,11 +178,14 @@ export const ChartWidgetRenderer: React.FC<ChartWidgetRendererProps> = ({ widget
             <tbody className="divide-y divide-slate-850">
               {data.map((row, i) => (
                 <tr key={i} className="hover:bg-slate-900/50">
-                  {Object.values(row).map((val: any, j) => (
-                    <td key={j} className="px-2.5 py-1.5 font-mono text-slate-200">
-                      {typeof val === 'number' ? val.toLocaleString() : String(val)}
-                    </td>
-                  ))}
+                  {columns.map((key, j) => {
+                    const val = row[key];
+                    return (
+                      <td key={j} className="px-2.5 py-1.5 font-mono text-slate-200">
+                        {typeof val === 'number' ? val.toLocaleString() : (val !== undefined && val !== null ? String(val) : '—')}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -340,7 +348,9 @@ export const ChartWidgetRenderer: React.FC<ChartWidgetRendererProps> = ({ widget
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-850">
           <div className="flex items-center gap-2 min-w-0">
             <div className="p-1 rounded-md bg-brand-950 text-brand-400 border border-brand-800/60 flex-shrink-0">
-              {widget.widgetType === 'word_cloud' ? (
+              {widget.widgetType === 'table' ? (
+                <TableIcon className="w-3.5 h-3.5" />
+              ) : widget.widgetType === 'word_cloud' ? (
                 <Cloud className="w-3.5 h-3.5" />
               ) : widget.chartType === 'pie' ? (
                 <PieIcon className="w-3.5 h-3.5" />

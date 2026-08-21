@@ -24,13 +24,15 @@ export interface WordCloudItem {
 }
 
 export interface CopilotWidget {
-  widgetType: 'chart' | 'word_cloud';
+  widgetType: 'chart' | 'word_cloud' | 'table';
   chartType?: 'line' | 'bar' | 'pie';
   title: string;
   description?: string;
   unit?: string;
   series?: ChartSeriesConfig[];
   data?: Record<string, any>[];
+  columns?: string[];
+  rows?: Record<string, any>[];
   wordCloudData?: WordCloudItem[];
 }
 
@@ -52,6 +54,7 @@ export interface CopilotContextSnapshot {
 
 export interface CopilotMessage {
   id: string;
+  runId?: string; // LangSmith execution trace ID
   role: 'user' | 'assistant' | 'system';
   content: string;
   status?: string; // Live reasoning state during stream
@@ -59,6 +62,8 @@ export interface CopilotMessage {
   citations?: CopilotCitation[];
   widgets?: CopilotWidget[];
   contextSnapshot?: CopilotContextSnapshot;
+  userRating?: 1 | -1 | null;
+  ratingComment?: string;
   createdAt: string;
 }
 
@@ -69,3 +74,11 @@ export interface ChatSessionSummary {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface FeedbackSubmission {
+  runId: string;
+  score: 1 | -1 | 0;
+  comment?: string;
+  feedbackType?: string;
+}
+
