@@ -75,8 +75,24 @@ class UnderwritingCopilotService:
         pruned_messages = prune_messages_state(langchain_messages)
         turn_count = len([m for m in pruned_messages if isinstance(m, HumanMessage)])
 
-        # Generate run ID for LangSmith tracing
+        # Generate run ID and model configuration for LangSmith tracing
         run_id = str(uuid.uuid4())
+        model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+        run_uuid = uuid.UUID(run_id)
+
+        run_config = {
+            "run_id": run_uuid,
+            "run_name": "UnderwritingCopilot",
+            "tags": ["underwriting-copilot", f"company-{company_id}", model_name],
+            "metadata": {
+                "session_id": session_id,
+                "company_id": company_id,
+                "user_id": user_id,
+                "model": model_name,
+                "ls_model_name": model_name,
+                "ls_provider": "openai",
+            }
+        }
 
         # Initial State
         initial_state: CopilotGraphState = {
@@ -97,24 +113,14 @@ class UnderwritingCopilotService:
             "widget_validation_error": None,
             "retrieved_sources": [],
             "run_id": run_id,
-            "turn_count": turn_count
-        }
-
-        # Model and Tracing Annotations
-        model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
-        run_uuid = uuid.UUID(run_id)
-
-        run_config = {
-            "run_id": run_uuid,
-            "run_name": "UnderwritingCopilot",
-            "tags": ["underwriting-copilot", f"company-{company_id}", model_name],
-            "metadata": {
-                "session_id": session_id,
-                "company_id": company_id,
-                "user_id": user_id,
-                "model": model_name,
-                "ls_model_name": model_name,
-                "ls_provider": "openai",
+            "turn_count": turn_count,
+            "model_used": model_name,
+            "token_usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": 0
             }
         }
 
@@ -171,13 +177,20 @@ class UnderwritingCopilotService:
                 yield f"event: citations\ndata: {json.dumps(frontend_citations)}\n\n"
                 yield f"data: {json.dumps({'citations': frontend_citations})}\n\n"
 
-            # 9. Persist Assistant Response in PostgreSQL with run_id & model metadata
+            # 9. Extract total tokens consumed and persist Assistant Response in PostgreSQL
+            final_token_usage = final_state.get("token_usage") or {
+                "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
+            }
             assistant_db_msg = ChatMessage(
                 id=str(uuid.uuid4()),
                 session_id=session_id,
                 role="assistant",
                 content=full_text,
-                tool_calls={"run_id": run_id, "model": model_name},
+                tool_calls={
+                    "run_id": run_id,
+                    "model": model_name,
+                    "token_usage": final_token_usage
+                },
                 widgets=[final_widget] if final_widget else None,
                 citations=citations_list if citations_list else None,
                 created_at=datetime.utcnow()
@@ -185,8 +198,8 @@ class UnderwritingCopilotService:
             self.db.add(assistant_db_msg)
             self.db.commit()
 
-            # 10. Done Event
-            yield f"event: done\ndata: {json.dumps({'session_id': session_id, 'message_id': assistant_db_msg.id, 'turn_count': turn_count, 'max_turns': 10})}\n\n"
+            # 10. Done Event with token accounting metadata
+            yield f"event: done\ndata: {json.dumps({'session_id': session_id, 'message_id': assistant_db_msg.id, 'turn_count': turn_count, 'max_turns': 10, 'model': model_name, 'token_usage': final_token_usage})}\n\n"
             yield f"data: [DONE]\n\n"
 
         except asyncio.CancelledError:

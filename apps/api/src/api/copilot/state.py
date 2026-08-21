@@ -44,6 +44,8 @@ class CopilotGraphState(TypedDict):
     # Grounded citations registry
     retrieved_sources: Annotated[List[CitationSource], update_sources]
 
-    # Observability
+    # Observability & Token Usage Breakdown (prompt, completion, cached, reasoning, total)
     run_id: Optional[str]
     turn_count: int
+    model_used: Optional[str]
+    token_usage: Optional[Dict[str, int]]

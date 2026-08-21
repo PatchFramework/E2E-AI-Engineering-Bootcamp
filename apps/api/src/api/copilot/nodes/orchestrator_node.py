@@ -1,7 +1,9 @@
+import os
 import logging
 from typing import Dict, Any, List
 
 from api.copilot.state import CopilotGraphState
+from api.copilot.token_tracker import extract_token_usage, merge_token_usages
 
 logger = logging.getLogger(__name__)
 
@@ -9,10 +11,15 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
     """
     Orchestrator node: Analyzes the user's underwriting question and active context snapshot
     to plan the multi-step execution chain or route directly to a conversational response.
+    Tracks token consumption metadata for LangSmith cost accounting.
     """
-    messages = state["messages"]
+    messages = state.get("messages", [])
     last_user_msg = messages[-1].content if messages else ""
     q = last_user_msg.lower().strip()
+    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+    current_token_usage = state.get("token_usage") or {
+        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
+    }
 
     logger.info(f"Orchestrator analyzing query: '{last_user_msg}'")
 
@@ -22,6 +29,8 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
         return {
             "execution_plan": ["DIRECT_ANSWER"],
             "current_step_index": 0,
+            "token_usage": current_token_usage,
+            "model_used": model_name,
             "reasoning_status": "Formulating direct answer..."
         }
 
@@ -58,5 +67,7 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
     return {
         "execution_plan": plan,
         "current_step_index": 0,
+        "token_usage": current_token_usage,
+        "model_used": model_name,
         "reasoning_status": f"Planned execution chain: {' -> '.join(plan)}"
     }

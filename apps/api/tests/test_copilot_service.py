@@ -149,3 +149,37 @@ async def test_submit_copilot_feedback_endpoint():
     assert resp.status == "SUCCESS"
     assert resp.run_id == "00000000-0000-0000-0000-000000000001"
 
+def test_token_tracker_extraction_and_merge():
+    from api.copilot.token_tracker import extract_token_usage, merge_token_usages, format_langsmith_token_metadata
+
+    msg = AIMessage(
+        content="Credit summary",
+        usage_metadata={
+            "input_tokens": 150,
+            "output_tokens": 80,
+            "total_tokens": 230,
+            "input_token_details": {"cache_read": 30},
+            "output_token_details": {"reasoning": 15}
+        }
+    )
+    extracted = extract_token_usage(msg)
+    assert extracted["prompt_tokens"] == 150
+    assert extracted["completion_tokens"] == 80
+    assert extracted["cached_tokens"] == 30
+    assert extracted["reasoning_tokens"] == 15
+    assert extracted["total_tokens"] == 230
+
+    merged = merge_token_usages(extracted, {"prompt_tokens": 50, "completion_tokens": 20, "cached_tokens": 10, "reasoning_tokens": 0, "total_tokens": 70})
+    assert merged["prompt_tokens"] == 200
+    assert merged["completion_tokens"] == 100
+    assert merged["cached_tokens"] == 40
+    assert merged["reasoning_tokens"] == 15
+    assert merged["total_tokens"] == 300
+
+    ls_meta = format_langsmith_token_metadata("gpt-4o", merged)
+    assert ls_meta["ls_model_name"] == "gpt-4o"
+    assert ls_meta["ls_provider"] == "openai"
+    assert ls_meta["usage_metadata"]["input_tokens"] == 200
+    assert ls_meta["usage_metadata"]["output_tokens"] == 100
+
+

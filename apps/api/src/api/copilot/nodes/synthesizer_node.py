@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from api.copilot.state import CopilotGraphState
 from api.copilot.pruning import is_turn_limit_reached, TURN_LIMIT_WARNING
 from api.copilot.prompts import get_prompt_template, FALLBACK_SYNTHESIS_PROMPT
+from api.copilot.token_tracker import extract_token_usage, merge_token_usages
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +17,16 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     with model cost tracking annotations.
     """
     plan = state.get("execution_plan", [])
-    messages = state["messages"]
+    messages = state.get("messages", [])
     last_user_msg = messages[-1].content if messages else ""
     q = last_user_msg.lower()
     company_id = state.get("company_id", 1)
     context_snapshot = state.get("context_snapshot") or {}
     company_name = context_snapshot.get("companyName") or f"Company #{company_id}"
     model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+    state_token_usage = state.get("token_usage") or {
+        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
+    }
 
     # 1. Handle Direct Answers
     if "DIRECT_ANSWER" in plan:
@@ -121,7 +125,9 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
                 ])
                 if ai_resp and ai_resp.content:
                     response_text = ai_resp.content
-                    logger.info(f"Synthesizer generated LLM response with model {model_name}")
+                    llm_usage = extract_token_usage(ai_resp)
+                    state_token_usage = merge_token_usages(state_token_usage, llm_usage)
+                    logger.info(f"Synthesizer generated LLM response with model {model_name} (tokens: {llm_usage})")
             except Exception as e:
                 logger.warning(f"Could not invoke ChatOpenAI in synthesizer node ({e}); using deterministic output")
 
@@ -130,9 +136,28 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     if is_turn_limit_reached(turn_count):
         response_text += TURN_LIMIT_WARNING
 
-    ai_msg = AIMessage(content=response_text)
+    ai_msg = AIMessage(
+        content=response_text,
+        usage_metadata={
+            "input_tokens": state_token_usage.get("prompt_tokens", 0),
+            "output_tokens": state_token_usage.get("completion_tokens", 0),
+            "total_tokens": state_token_usage.get("total_tokens", 0),
+            "input_token_details": {
+                "cache_read": state_token_usage.get("cached_tokens", 0)
+            },
+            "output_token_details": {
+                "reasoning": state_token_usage.get("reasoning_tokens", 0)
+            }
+        },
+        response_metadata={
+            "model_name": model_name,
+            "token_usage": state_token_usage
+        }
+    )
 
     return {
         "messages": [ai_msg],
+        "token_usage": state_token_usage,
+        "model_used": model_name,
         "reasoning_status": "Credit analysis synthesis complete."
     }
