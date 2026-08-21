@@ -1,4 +1,7 @@
-const API_BASE = ((import.meta as any).env?.VITE_API_URL as string | undefined) ?? 'http://localhost:8000';
+export function getApiBaseUrl(): string {
+  const envUrl = ((import.meta as any).env?.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? 'http://localhost:8000';
+  return envUrl.endsWith('/api') ? envUrl : `${envUrl}/api`;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -13,8 +16,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const base = getApiBaseUrl();
+  const cleanEndpoint = endpoint.startsWith('/api/')
+    ? endpoint.replace(/^\/api/, '')
+    : endpoint.startsWith('/')
+    ? endpoint
+    : `/${endpoint}`;
+  const url = `${base}${cleanEndpoint}`;
   const headers = new Headers(options.headers || {});
+
 
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
