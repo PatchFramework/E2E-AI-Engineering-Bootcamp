@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+import os
 from datetime import datetime
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from sqlalchemy.orm import Session
@@ -99,14 +100,35 @@ class UnderwritingCopilotService:
             "turn_count": turn_count
         }
 
+        # Model and Tracing Annotations
+        model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+        run_uuid = uuid.UUID(run_id)
+
+        run_config = {
+            "run_id": run_uuid,
+            "run_name": "UnderwritingCopilot",
+            "tags": ["underwriting-copilot", f"company-{company_id}", model_name],
+            "metadata": {
+                "session_id": session_id,
+                "company_id": company_id,
+                "user_id": user_id,
+                "model": model_name,
+                "ls_model_name": model_name,
+                "ls_provider": "openai",
+            }
+        }
+
         # 4. Stream Initial Handshake & Status Events
-        yield f"event: trace\ndata: {json.dumps({'run_id': run_id})}\n\n"
+        yield f"event: trace\ndata: {json.dumps({'run_id': run_id, 'model': model_name})}\n\n"
         yield f"event: status\ndata: {json.dumps({'step': 'plan', 'message': 'Analyzing request & underwriting context...'})}\n\n"
 
         try:
-            # 5. Run Graph Workflow (sync execution wrapped in asyncio)
+            # 5. Run Graph Workflow (sync execution wrapped in asyncio with LangSmith config)
             loop = asyncio.get_running_loop()
-            final_state = await loop.run_in_executor(None, self.graph.invoke, initial_state)
+            final_state = await loop.run_in_executor(
+                None,
+                lambda: self.graph.invoke(initial_state, config=run_config)
+            )
 
             # Emit intermediate status updates if any
             if final_state.get("reasoning_status"):
@@ -149,12 +171,13 @@ class UnderwritingCopilotService:
                 yield f"event: citations\ndata: {json.dumps(frontend_citations)}\n\n"
                 yield f"data: {json.dumps({'citations': frontend_citations})}\n\n"
 
-            # 9. Persist Assistant Response in PostgreSQL
+            # 9. Persist Assistant Response in PostgreSQL with run_id & model metadata
             assistant_db_msg = ChatMessage(
                 id=str(uuid.uuid4()),
                 session_id=session_id,
                 role="assistant",
                 content=full_text,
+                tool_calls={"run_id": run_id, "model": model_name},
                 widgets=[final_widget] if final_widget else None,
                 citations=citations_list if citations_list else None,
                 created_at=datetime.utcnow()

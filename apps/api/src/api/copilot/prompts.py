@@ -81,14 +81,15 @@ def get_prompt_template(prompt_name: str, fallback_content: str) -> str:
         if now - cached["timestamp"] < CACHE_TTL_SECONDS:
             return cached["content"]
 
-    api_key = os.getenv("LANGCHAIN_API_KEY")
+    api_key = os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY")
+    endpoint = os.getenv("LANGSMITH_ENDPOINT") or os.getenv("LANGCHAIN_ENDPOINT") or "https://api.smith.langchain.com"
     if not api_key:
         return fallback_content
 
     try:
         # Lazy import of langchainhub / langsmith client
         from langsmith import Client
-        client = Client()
+        client = Client(api_key=api_key, api_url=endpoint)
         # Attempt to pull prompt from LangSmith Hub
         prompt_obj = client.pull_prompt(prompt_name)
         if hasattr(prompt_obj, "template"):

@@ -157,11 +157,25 @@ async def submit_copilot_feedback(payload: FeedbackRequest):
     """
     Attaches analyst thumbs up/down, feedback comments, or fact corrections to LangSmith trace runs.
     """
-    api_key = os.getenv("LANGCHAIN_API_KEY")
+    api_key = (
+        os.getenv("LANGSMITH_API_KEY")
+        or os.getenv("LANGCHAIN_API_KEY")
+    )
+    endpoint = (
+        os.getenv("LANGSMITH_ENDPOINT")
+        or os.getenv("LANGCHAIN_ENDPOINT")
+        or "https://api.smith.langchain.com"
+    )
+    project_name = (
+        os.getenv("LANGSMITH_PROJECT")
+        or os.getenv("LANGCHAIN_PROJECT")
+        or "e2e-ai-eng"
+    )
+
     if api_key:
         try:
             from langsmith import Client
-            client = Client()
+            client = Client(api_key=api_key, api_url=endpoint)
             client.create_feedback(
                 run_id=payload.run_id,
                 key=payload.feedback_type or "user_rating",
@@ -169,9 +183,11 @@ async def submit_copilot_feedback(payload: FeedbackRequest):
                 comment=payload.comment,
                 value=payload.corrected_value
             )
-            logger.info(f"Attached feedback score={payload.score} to LangSmith run {payload.run_id}")
+            logger.info(f"Attached feedback score={payload.score} comment='{payload.comment}' to LangSmith run {payload.run_id}")
         except Exception as e:
             logger.warning(f"Could not forward feedback to LangSmith ({e})")
+    else:
+        logger.warning(f"LANGSMITH_API_KEY / LANGCHAIN_API_KEY not configured. Feedback recorded locally for run {payload.run_id}")
 
     return FeedbackResponse(
         status="SUCCESS",

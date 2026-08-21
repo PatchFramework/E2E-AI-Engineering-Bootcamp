@@ -1,16 +1,19 @@
+import os
 import logging
 from typing import Dict, Any, List
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 from api.copilot.state import CopilotGraphState
 from api.copilot.pruning import is_turn_limit_reached, TURN_LIMIT_WARNING
+from api.copilot.prompts import get_prompt_template, FALLBACK_SYNTHESIS_PROMPT
 
 logger = logging.getLogger(__name__)
 
 def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     """
     Synthesizer node: Aggregates subagent findings, formats the final markdown response
-    with evidence citations, and applies conversation budget warnings.
+    with evidence citations, applies conversation budget warnings, and invokes ChatOpenAI
+    with model cost tracking annotations.
     """
     plan = state.get("execution_plan", [])
     messages = state["messages"]
@@ -19,6 +22,7 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     company_id = state.get("company_id", 1)
     context_snapshot = state.get("context_snapshot") or {}
     company_name = context_snapshot.get("companyName") or f"Company #{company_id}"
+    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
 
     # 1. Handle Direct Answers
     if "DIRECT_ANSWER" in plan:
@@ -32,7 +36,7 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
             "What would you like to investigate today?"
         )
     else:
-        # 2. Synthesize multi-agent findings
+        # 2. Synthesize multi-agent findings into structured background
         parts: List[str] = []
 
         metric_results = state.get("metric_results") or {}
@@ -91,7 +95,37 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
 
         response_text = "\n\n".join(parts)
 
-    # 3. Check Conversation Turn Limit Cap
+        # 3. If OpenAI API Key is available, refine synthesis with LLM for natural tone and LangSmith cost tracking
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            try:
+                from langchain_openai import ChatOpenAI
+                llm = ChatOpenAI(
+                    model=model_name,
+                    temperature=0.2,
+                    api_key=openai_key,
+                    tags=["synthesizer", model_name],
+                    model_kwargs={
+                        "metadata": {
+                            "ls_model_name": model_name,
+                            "ls_provider": "openai",
+                            "company_id": company_id
+                        }
+                    }
+                )
+                system_prompt = get_prompt_template("copilot-synthesizer", FALLBACK_SYNTHESIS_PROMPT)
+                prompt_content = f"Company: {company_name}\nUser Question: {last_user_msg}\nFindings & Evidence:\n{response_text}"
+                ai_resp = llm.invoke([
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=prompt_content)
+                ])
+                if ai_resp and ai_resp.content:
+                    response_text = ai_resp.content
+                    logger.info(f"Synthesizer generated LLM response with model {model_name}")
+            except Exception as e:
+                logger.warning(f"Could not invoke ChatOpenAI in synthesizer node ({e}); using deterministic output")
+
+    # 4. Check Conversation Turn Limit Cap
     turn_count = state.get("turn_count", 1)
     if is_turn_limit_reached(turn_count):
         response_text += TURN_LIMIT_WARNING

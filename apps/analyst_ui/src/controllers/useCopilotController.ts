@@ -124,6 +124,7 @@ export function useCopilotController(
         if (!isCancelled && Array.isArray(backendMsgs) && backendMsgs.length > 0) {
           const mapped: CopilotMessage[] = backendMsgs.map(m => ({
             id: m.id,
+            runId: m.tool_calls?.run_id || m.tool_calls?.runId || undefined,
             role: m.role as 'user' | 'assistant' | 'system',
             content: m.content || '',
             toolCalls: m.tool_calls,
@@ -433,8 +434,8 @@ export function useCopilotController(
                 if (parsedData.message_id) {
                   setMessagesForCurrentSession(prev =>
                     prev.map(m =>
-                      m.id === assistantMsgId
-                        ? { ...m, id: parsedData.message_id, runId: activeRunId || parsedData.message_id }
+                      m.id === assistantMsgId || m.id === parsedData.message_id
+                        ? { ...m, id: parsedData.message_id, runId: activeRunId || m.runId || parsedData.message_id }
                         : m
                     )
                   );
@@ -446,7 +447,11 @@ export function useCopilotController(
                 const errMsg = parsedData.error || 'Copilot encountered an error during reasoning.';
                 accumulatedContent += `\n\n> ⚠️ **Error**: ${errMsg}`;
                 setMessagesForCurrentSession(prev =>
-                  prev.map(m => (m.id === assistantMsgId ? { ...m, content: accumulatedContent } : m))
+                  prev.map(m =>
+                    m.id === assistantMsgId || (activeRunId && m.runId === activeRunId)
+                      ? { ...m, content: accumulatedContent }
+                      : m
+                  )
                 );
               }
 
@@ -471,7 +476,7 @@ export function useCopilotController(
 
                 setMessagesForCurrentSession(prev =>
                   prev.map(m =>
-                    m.id === assistantMsgId
+                    m.id === assistantMsgId || (activeRunId && m.runId === activeRunId)
                       ? {
                           ...m,
                           content: accumulatedContent || m.content,

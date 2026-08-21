@@ -133,3 +133,19 @@ def test_orchestrator_planning():
     assert "METRICS" in res_chart["execution_plan"]
     assert "GEN_UI" in res_chart["execution_plan"]
     assert "SYNTHESIZE" in res_chart["execution_plan"]
+
+@pytest.mark.anyio
+async def test_submit_copilot_feedback_endpoint():
+    from api.routers.copilot import submit_copilot_feedback
+    from api.copilot.schemas.feedback_schemas import FeedbackRequest
+
+    req = FeedbackRequest(
+        run_id="00000000-0000-0000-0000-000000000001",
+        score=1,
+        feedback_type="user_rating",
+        comment="Great breakdown of leverage metrics"
+    )
+    resp = await submit_copilot_feedback(req)
+    assert resp.status == "SUCCESS"
+    assert resp.run_id == "00000000-0000-0000-0000-000000000001"
+

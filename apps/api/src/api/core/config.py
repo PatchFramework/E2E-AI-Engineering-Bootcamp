@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,18 @@ def find_env_file() -> str:
 
 class Config(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4o"
+    COPILOT_LLM_MODEL: str = "gpt-4o"
+    
+    # LangSmith / LangChain Tracing Configuration
+    LANGSMITH_API_KEY: Optional[str] = None
+    LANGCHAIN_API_KEY: Optional[str] = None
+    LANGSMITH_TRACING: Optional[str] = "true"
+    LANGCHAIN_TRACING_V2: Optional[str] = "true"
+    LANGSMITH_PROJECT: Optional[str] = "e2e-ai-eng"
+    LANGCHAIN_PROJECT: Optional[str] = "e2e-ai-eng"
+    LANGSMITH_ENDPOINT: Optional[str] = "https://api.smith.langchain.com"
+    LANGCHAIN_ENDPOINT: Optional[str] = "https://api.smith.langchain.com"
     
     # Database Configuration
     POSTGRES_USER: str = "postgres"
@@ -44,13 +57,39 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(env_file=find_env_file(), extra="ignore")
 
     @model_validator(mode="after")
-    def construct_urls(self) -> "Config":
+    def construct_urls_and_env(self) -> "Config":
         if not self.DATABASE_URL:
             self.DATABASE_URL = f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         if not self.S3_ENDPOINT_URL:
             self.S3_ENDPOINT_URL = f"http://{self.MINIO_HOST}:{self.MINIO_PORT}"
         if not self.AIRFLOW_URL:
             self.AIRFLOW_URL = f"http://{self.AIRFLOW_HOST}:{self.AIRFLOW_PORT}"
+
+        # Propagate LangSmith / LangChain environment variables
+        effective_ls_key = self.LANGSMITH_API_KEY or self.LANGCHAIN_API_KEY or os.environ.get("LANGSMITH_API_KEY") or os.environ.get("LANGCHAIN_API_KEY")
+        if effective_ls_key:
+            os.environ["LANGCHAIN_API_KEY"] = effective_ls_key
+            os.environ["LANGSMITH_API_KEY"] = effective_ls_key
+        
+        effective_tracing = self.LANGSMITH_TRACING or self.LANGCHAIN_TRACING_V2 or os.environ.get("LANGSMITH_TRACING") or os.environ.get("LANGCHAIN_TRACING_V2") or "true"
+        os.environ["LANGCHAIN_TRACING_V2"] = effective_tracing
+        os.environ["LANGSMITH_TRACING"] = effective_tracing
+
+        effective_project = self.LANGSMITH_PROJECT or self.LANGCHAIN_PROJECT or os.environ.get("LANGSMITH_PROJECT") or os.environ.get("LANGCHAIN_PROJECT") or "e2e-ai-eng"
+        os.environ["LANGCHAIN_PROJECT"] = effective_project
+        os.environ["LANGSMITH_PROJECT"] = effective_project
+
+        effective_endpoint = self.LANGSMITH_ENDPOINT or self.LANGCHAIN_ENDPOINT or os.environ.get("LANGSMITH_ENDPOINT") or os.environ.get("LANGCHAIN_ENDPOINT") or "https://api.smith.langchain.com"
+        os.environ["LANGCHAIN_ENDPOINT"] = effective_endpoint
+        os.environ["LANGSMITH_ENDPOINT"] = effective_endpoint
+
+        if self.OPENAI_API_KEY:
+            os.environ["OPENAI_API_KEY"] = self.OPENAI_API_KEY
+
+        os.environ["COPILOT_LLM_MODEL"] = self.COPILOT_LLM_MODEL
+        os.environ["OPENAI_MODEL"] = self.OPENAI_MODEL
+
         return self
+
 
 config = Config()
