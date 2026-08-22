@@ -1,9 +1,10 @@
 import os
+import json
 import logging
 from typing import Dict, Any, List
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
-from api.copilot.state import CopilotGraphState
+from api.copilot.state import CopilotGraphState, CleanEvent
 from api.copilot.pruning import is_turn_limit_reached, TURN_LIMIT_WARNING
 from api.copilot.prompts import get_prompt_template, FALLBACK_SYNTHESIS_PROMPT
 from api.copilot.token_tracker import extract_token_usage, merge_token_usages
@@ -12,21 +13,28 @@ logger = logging.getLogger(__name__)
 
 def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     """
-    Synthesizer node: Aggregates subagent findings, formats the final markdown response
-    with evidence citations, applies conversation budget warnings, and invokes ChatOpenAI
-    with model cost tracking annotations.
+    Synthesizer node:
+    Consumes the clean chronological event narrative, validated GenUI widget, and grounded citations.
+    Invokes ChatOpenAI with full LangSmith cost & token tracking to produce the final institutional credit memo.
     """
     plan = state.get("execution_plan", [])
     messages = state.get("messages", [])
     last_user_msg = messages[-1].content if messages else ""
-    q = last_user_msg.lower()
     company_id = state.get("company_id", 1)
     context_snapshot = state.get("context_snapshot") or {}
     company_name = context_snapshot.get("companyName") or f"Company #{company_id}"
     model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
-    state_token_usage = state.get("token_usage") or {
+    
+    current_token_usage = state.get("token_usage") or {
         "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
     }
+    synthesizer_tokens = {
+        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
+    }
+
+    clean_history: List[CleanEvent] = list(state.get("clean_event_history") or [])
+    pending_widget = state.get("pending_widget")
+    citations = state.get("retrieved_sources") or []
 
     # 1. Handle Direct Answers
     if "DIRECT_ANSWER" in plan:
@@ -40,67 +48,45 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
             "What would you like to investigate today?"
         )
     else:
-        # 2. Synthesize multi-agent findings into structured background
-        parts: List[str] = []
+        # 2. Build Structured Narrative Context from clean_event_history
+        narrative_lines: List[str] = [f"Company: {company_name} (ID: {company_id})", f"Analyst Inquiry: {last_user_msg}", ""]
+        narrative_lines.append("### Chronological Workflow Execution History:")
 
-        metric_results = state.get("metric_results") or {}
-        rag_chunks = state.get("rag_chunks") or {}
-        quality_issues = state.get("quality_issues") or {}
-        pending_widget = state.get("pending_widget")
+        for ev in clean_history:
+            ev_type = ev.get("event_type", "EVENT")
+            agent = ev.get("agent", "agent")
+            content = ev.get("content", "")
+            if ev_type == "USER_QUERY":
+                continue
+            elif ev_type == "ORCHESTRATOR_PLAN":
+                narrative_lines.append(f"- **[Orchestrator Plan]**: {content}")
+            elif ev_type == "DELEGATED_TASK":
+                narrative_lines.append(f"- **[Task Delegated to {agent.upper()}]**: {content}")
+            elif ev_type == "SUBAGENT_ANSWER":
+                narrative_lines.append(f"- **[Findings from {agent.upper()}]**: {content}")
+            elif ev_type == "GEN_UI_SPEC":
+                narrative_lines.append(f"- **[Generative UI Widget]**: {content}")
 
-        # Metric findings
-        if metric_results.get("history"):
-            hist_data = metric_results["history"]
-            metric_name = hist_data.get("display_name", "Metric")
-            points = hist_data.get("history", [])
-            if len(points) >= 2:
-                start_val = points[0].get("value")
-                end_val = points[-1].get("value")
-                start_yr = points[0].get("fiscal_year")
-                end_yr = points[-1].get("fiscal_year")
-                parts.append(
-                    f"Based on historical financial records for **{company_name}**, **{metric_name}** shifted from **{start_val}{hist_data.get('unit', '')}** in {start_yr} to **{end_val}{hist_data.get('unit', '')}** in {end_yr}."
-                )
+        # Add citations reference summary
+        if citations:
+            narrative_lines.append("\n### Grounded Evidence Citations:")
+            for cit in citations[:8]:
+                disp_page = cit.displayed_page or f"p. {cit.page_number}"
+                sec = f" · {cit.section}" if cit.section else ""
+                narrative_lines.append(f"- [{cit.filename} · {disp_page}{sec}]: \"{cit.snippet[:180]}...\"")
 
-        if metric_results.get("overview") and not parts:
-            ov = metric_results["overview"]
-            m_count = ov.get("metrics_count", 0)
-            parts.append(
-                f"Calculated **{m_count} credit underwriting metrics** for **{company_name}** across Profitability, Leverage, Coverage, and Liquidity."
-            )
-
-        # RAG findings
-        if rag_chunks.get("search_results"):
-            top_chunk = rag_chunks["search_results"][0]
-            snippet = top_chunk.get("text", "")[:240].strip()
-            sec = top_chunk.get("section", "Filings")
-            disp_page = top_chunk.get("displayed_page", "p. 1")
-            parts.append(
-                f"\n**Filing Evidence ({sec} · {disp_page}):**\n> *\"{snippet}...\"*"
-            )
-
-        # Quality & audit findings
-        if quality_issues.get("active_issues"):
-            issues = quality_issues["active_issues"].get("issues", [])
-            if issues:
-                parts.append(
-                    f"\n⚠️ **Identified {len(issues)} data quality / accounting reconciliation issue(s)** requiring review."
-                )
-
-        # Widget note
+        # Add GenUI note
         if pending_widget:
-            w_title = pending_widget.get("title", "Visualization")
-            parts.append(f"\nBelow is the generated **{w_title}**:")
-
-        if not parts:
-            parts.append(
-                f"Completed credit analysis for **{company_name}**. The company exhibits an overall **BB (Elevated Risk)** credit profile, driven by rising net leverage and steady operating cash flows."
+            narrative_lines.append(
+                f"\nNote: A validated **{pending_widget.get('widgetType')}** widget titled **'{pending_widget.get('title')}'** has been generated and will be rendered in the UI. Reference its key visual insights."
             )
 
-        response_text = "\n\n".join(parts)
+        narrative_prompt_context = "\n".join(narrative_lines)
 
-        # 3. If OpenAI API Key is available, refine synthesis with LLM for natural tone and LangSmith cost tracking
+        # 3. Invoke LLM for Final Synthesis
         openai_key = os.getenv("OPENAI_API_KEY")
+        response_text = ""
+
         if openai_key:
             try:
                 from langchain_openai import ChatOpenAI
@@ -118,46 +104,57 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
                     }
                 )
                 system_prompt = get_prompt_template("copilot-synthesizer", FALLBACK_SYNTHESIS_PROMPT)
-                prompt_content = f"Company: {company_name}\nUser Question: {last_user_msg}\nFindings & Evidence:\n{response_text}"
                 ai_resp = llm.invoke([
                     SystemMessage(content=system_prompt),
-                    HumanMessage(content=prompt_content)
+                    HumanMessage(content=narrative_prompt_context)
                 ])
                 if ai_resp and ai_resp.content:
                     response_text = ai_resp.content
-                    llm_usage = extract_token_usage(ai_resp)
-                    state_token_usage = merge_token_usages(state_token_usage, llm_usage)
-                    logger.info(f"Synthesizer generated LLM response with model {model_name} (tokens: {llm_usage})")
+                    synthesizer_tokens = extract_token_usage(ai_resp)
+                    logger.info(f"Synthesizer completed synthesis with {model_name} (tokens: {synthesizer_tokens})")
             except Exception as e:
-                logger.warning(f"Could not invoke ChatOpenAI in synthesizer node ({e}); using deterministic output")
+                logger.warning(f"Synthesizer LLM invoke failed ({e}); building deterministic summary.")
 
-    # 4. Check Conversation Turn Limit Cap
+        # Fallback text if LLM was unavailable
+        if not response_text:
+            parts = [f"### Credit Analysis for {company_name}"]
+            for ev in clean_history:
+                if ev.get("event_type") == "SUBAGENT_ANSWER":
+                    parts.append(f"- {ev.get('content')}")
+            if pending_widget:
+                parts.append(f"\nBelow is the generated **{pending_widget.get('title', 'Visualization')}**.")
+            response_text = "\n\n".join(parts)
+
+    # 4. Check Turn Limit Cap
     turn_count = state.get("turn_count", 1)
     if is_turn_limit_reached(turn_count):
         response_text += TURN_LIMIT_WARNING
 
+    total_token_usage = merge_token_usages(current_token_usage, synthesizer_tokens)
+
     ai_msg = AIMessage(
         content=response_text,
         usage_metadata={
-            "input_tokens": state_token_usage.get("prompt_tokens", 0),
-            "output_tokens": state_token_usage.get("completion_tokens", 0),
-            "total_tokens": state_token_usage.get("total_tokens", 0),
+            "input_tokens": total_token_usage.get("prompt_tokens", 0),
+            "output_tokens": total_token_usage.get("completion_tokens", 0),
+            "total_tokens": total_token_usage.get("total_tokens", 0),
             "input_token_details": {
-                "cache_read": state_token_usage.get("cached_tokens", 0)
+                "cache_read": total_token_usage.get("cached_tokens", 0)
             },
             "output_token_details": {
-                "reasoning": state_token_usage.get("reasoning_tokens", 0)
+                "reasoning": total_token_usage.get("reasoning_tokens", 0)
             }
         },
         response_metadata={
             "model_name": model_name,
-            "token_usage": state_token_usage
+            "token_usage": total_token_usage
         }
     )
 
     return {
         "messages": [ai_msg],
-        "token_usage": state_token_usage,
+        "token_usage": total_token_usage,
         "model_used": model_name,
         "reasoning_status": "Credit analysis synthesis complete."
     }
+
