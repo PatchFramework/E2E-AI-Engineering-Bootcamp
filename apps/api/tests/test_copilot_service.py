@@ -182,4 +182,43 @@ def test_token_tracker_extraction_and_merge():
     assert ls_meta["usage_metadata"]["input_tokens"] == 200
     assert ls_meta["usage_metadata"]["output_tokens"] == 100
 
+def test_clean_event_history_reducer():
+    from api.copilot.state import append_clean_events, CleanEvent
+
+    existing: list[CleanEvent] = [
+        {"event_type": "USER_QUERY", "agent": "user", "content": "Query 1", "metadata": None, "timestamp": 100.0}
+    ]
+    new_evs: list[CleanEvent] = [
+        {"event_type": "ORCHESTRATOR_PLAN", "agent": "orchestrator", "content": "Plan A", "metadata": None, "timestamp": 101.0}
+    ]
+    merged = append_clean_events(existing, new_evs)
+    assert len(merged) == 2
+    assert merged[0]["event_type"] == "USER_QUERY"
+    assert merged[1]["event_type"] == "ORCHESTRATOR_PLAN"
+
+def test_subagent_substate_isolation():
+    from api.copilot.state import SubagentSubstate
+
+    sub: SubagentSubstate = {
+        "task_description": "Retrieve EBITDA leverage",
+        "iteration_count": 1,
+        "max_iterations": 3,
+        "is_complete": False,
+        "tool_call_history": [
+            {
+                "tool_name": "get_metric_history",
+                "arguments": {"metric_name": "leverage"},
+                "status": "SUCCESS",
+                "error_message": None,
+                "timestamp": 123456.78
+            }
+        ],
+        "internal_messages": [],
+        "final_summary": "Retrieved 5-year leverage"
+    }
+    assert sub["iteration_count"] == 1
+    assert len(sub["tool_call_history"]) == 1
+    assert sub["tool_call_history"][0]["tool_name"] == "get_metric_history"
+
+
 
