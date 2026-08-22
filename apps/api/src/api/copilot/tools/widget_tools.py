@@ -128,3 +128,13 @@ def build_fallback_table_spec(
 ) -> TableWidgetSpec:
     """Builds a fallback TableWidgetSpec when chart validation fails."""
     return build_fallback_table_spec_impl(title, raw_data, description)
+
+def create_widget_tools():
+    """Returns the list of Generative UI chart construction tools for LLM tool binding."""
+    return [
+        build_line_chart_spec,
+        build_bar_chart_spec,
+        build_pie_chart_spec,
+        build_word_cloud_spec
+    ]
+
