@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from langsmith import traceable
 from langchain_core.tools import tool, BaseTool
-from langgraph.prebuilt import ToolNode
 
 from api.models.db_models import (
     DerivedMetricValue, DerivedMetricDefinition, FinancialFact, FinancialFactVersion, SourceLocation, Document
@@ -256,8 +255,4 @@ def create_metric_tools(db: Session) -> List[BaseTool]:
         get_metric_history_tool,
         get_fact_lineage_tool
     ]
-
-# Default unbound ToolNode
-METRIC_TOOL_NODE = ToolNode([evaluate_formula])
-
     

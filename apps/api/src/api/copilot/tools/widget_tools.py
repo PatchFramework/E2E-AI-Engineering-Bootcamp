@@ -4,7 +4,6 @@ from api.copilot.schemas.widget_schemas import (
 )
 from langsmith import traceable
 from langchain_core.tools import tool
-from langgraph.prebuilt import ToolNode
 
 def build_line_chart_spec_impl(
     title: str,
@@ -129,12 +128,3 @@ def build_fallback_table_spec(
 ) -> TableWidgetSpec:
     """Builds a fallback TableWidgetSpec when chart validation fails."""
     return build_fallback_table_spec_impl(title, raw_data, description)
-
-# exposing the tools as a structured tool node for Graph Builder
-WIDGET_TOOL_NODE = ToolNode([
-    build_line_chart_spec,
-    build_bar_chart_spec,
-    build_pie_chart_spec,
-    build_word_cloud_spec,
-    build_fallback_table_spec
-])
