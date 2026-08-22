@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from langsmith import traceable, get_current_run_tree
 from langchain_core.tools import tool
+from langgraph.prebuilt import ToolNode
 
 from api.models.db_models import DocumentChunk, Document, SourceLocation
 from api.copilot.schemas.citation_schemas import CitationSource
@@ -215,3 +216,11 @@ def get_page_content(db: Session, document_id: int, page_number: int) -> Dict[st
         "text": page_text,
         "sections": list({c.section_name for c in chunks if c.section_name})
     }
+
+
+# exposing the tools as a structured tool node for Graph Builder
+RETRIEVAL_TOOL_NODE = ToolNode([
+    search_filing_chunks_hybrid,
+    count_concept_frequency,
+    get_page_content
+])

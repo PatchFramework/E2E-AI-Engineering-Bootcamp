@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from langsmith import traceable, get_current_run_tree
 from langchain_core.tools import tool
+from langgraph.prebuilt import ToolNode
 
 from api.models.db_models import (
     FinancialFact, FinancialFactVersion, DataQualityIssue, AuditEvent
@@ -125,3 +126,10 @@ def get_fact_audit_trail(db: Session, fact_id: int) -> Dict[str, Any]:
         "event_count": len(event_list),
         "audit_events": event_list
     }
+
+# exposing the tools as a structured tool node for Graph Builder
+AUDIT_TOOL_NODE = ToolNode([
+    get_unverified_facts, 
+    get_data_quality_issues, 
+    get_fact_audit_trail
+])

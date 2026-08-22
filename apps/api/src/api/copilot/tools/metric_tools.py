@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from langsmith import traceable, get_current_run_tree
 from langchain_core.tools import tool
+from langgraph.prebuilt import ToolNode
 
 from api.models.db_models import (
     DerivedMetricValue, DerivedMetricDefinition, FinancialFact, FinancialFactVersion, SourceLocation, Document
@@ -228,3 +229,13 @@ def get_fact_lineage(db: Session, company_id: int, metric_name: str, fiscal_year
         "lineage": lineage_data.model_dump() if lineage_data else {},
         "citations": [c.model_dump() for c in citations]
     }
+
+
+# exposing the tools as a structured tool node for Graph Builder
+METRIC_TOOL_NODE = ToolNode([
+    evaluate_formula,
+    get_company_metrics,
+    get_metric_history,
+    get_fact_lineage
+])
+    
