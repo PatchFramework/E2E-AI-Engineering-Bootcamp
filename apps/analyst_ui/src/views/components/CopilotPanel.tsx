@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { CopilotMessage, CopilotContextSnapshot, ChatSessionSummary, CopilotCitation } from '../../models/copilot';
 import { ChartWidgetRenderer } from './copilot/ChartWidgetRenderer';
+import { MarkdownRenderer } from './copilot/MarkdownRenderer';
 
 interface CopilotPanelProps {
   isOpen: boolean;
@@ -260,6 +261,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
           <button
             type="button"
             onClick={onNewSession}
+            aria-label="Start New Session"
             className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-brand-300 transition"
             title="Start New Chat Session"
           >
@@ -483,8 +485,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
               </span>
             </div>
 
-            {/* Content Text */}
-            <p className="whitespace-pre-line leading-relaxed">{m.content}</p>
+            {/* Content Text (Rich Markdown with HTML, Lists, Code, Mermaid & Inline Visualizations) */}
+            <MarkdownRenderer content={m.content} />
 
             {/* Dynamic Generative UI Chart Widgets */}
             {m.widgets && m.widgets.length > 0 && (
