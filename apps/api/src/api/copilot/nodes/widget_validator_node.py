@@ -1,8 +1,9 @@
+import time
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from pydantic import ValidationError
-from api.copilot.state import CopilotGraphState
+from api.copilot.state import CopilotGraphState, CleanEvent
 from api.copilot.schemas.widget_schemas import (
     LineChartSpec, BarChartSpec, PieChartSpec, WordCloudSpec, TableWidgetSpec
 )
@@ -14,6 +15,7 @@ def validate_widget_node(state: CopilotGraphState) -> Dict[str, Any]:
     """
     Validates pending_widget candidate against strict Pydantic schemas.
     Enforces a 3-retry self-correction limit, after which it falls back to a TableWidgetSpec.
+    Appends validated widget event to clean_event_history.
     """
     pending = state.get("pending_widget")
     if not pending:
@@ -22,6 +24,7 @@ def validate_widget_node(state: CopilotGraphState) -> Dict[str, Any]:
     retries = state.get("widget_validation_retries", 0)
     w_type = pending.get("widgetType")
     c_type = pending.get("chartType")
+    new_events: List[CleanEvent] = []
 
     try:
         if w_type == "word_cloud":
@@ -37,10 +40,19 @@ def validate_widget_node(state: CopilotGraphState) -> Dict[str, Any]:
         else:
             raise ValueError(f"Unsupported widget type: '{w_type}' (chartType: '{c_type}')")
 
-        logger.info("Widget schema validation PASSED.")
+        logger.info(f"Widget schema validation PASSED for '{pending.get('title')}'.")
+        new_events.append({
+            "event_type": "GEN_UI_SPEC",
+            "agent": "gen_ui",
+            "content": f"Validated {w_type} widget ({pending.get('title')})",
+            "metadata": {"widget": pending},
+            "timestamp": time.time()
+        })
+
         return {
             "pending_widget": pending,
             "widget_validation_error": None,
+            "clean_event_history": new_events,
             "reasoning_status": "Validated Generative UI chart schema"
         }
     except (ValidationError, ValueError) as err:
@@ -62,9 +74,20 @@ def validate_widget_node(state: CopilotGraphState) -> Dict[str, Any]:
                 raw_data=raw_data if isinstance(raw_data, list) else [],
                 description="Raw Data Table (Automatic fallback after chart validation limit)"
             )
+            fallback_dict = fallback.model_dump()
+            new_events.append({
+                "event_type": "GEN_UI_SPEC",
+                "agent": "gen_ui",
+                "content": f"Fallback table widget generated: {fallback.title}",
+                "metadata": {"widget": fallback_dict},
+                "timestamp": time.time()
+            })
+
             return {
-                "pending_widget": fallback.model_dump(),
+                "pending_widget": fallback_dict,
                 "widget_validation_retries": 3,
                 "widget_validation_error": None,
+                "clean_event_history": new_events,
                 "reasoning_status": "Generated fallback data table widget"
             }
+

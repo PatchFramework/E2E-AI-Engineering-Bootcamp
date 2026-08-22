@@ -3,8 +3,17 @@ from pydantic import BaseModel, Field, model_validator
 
 class ChartSeriesConfig(BaseModel):
     key: str = Field(..., description="Data object key corresponding to this series (e.g., 'leverage', 'ebitda')")
-    label: str = Field(..., description="Human-readable series name for legend and tooltips")
+    label: Optional[str] = Field(None, description="Human-readable series name for legend and tooltips")
+    name: Optional[str] = Field(None, description="Alternative alias for label")
     color: Optional[str] = Field(None, description="Hex color code (e.g., '#f43f5e', '#10b981')")
+
+    @model_validator(mode="after")
+    def populate_label(self) -> 'ChartSeriesConfig':
+        if not self.label and self.name:
+            self.label = self.name
+        elif not self.label:
+            self.label = self.key
+        return self
 
 class LineChartSpec(BaseModel):
     widgetType: Literal["chart"] = "chart"
