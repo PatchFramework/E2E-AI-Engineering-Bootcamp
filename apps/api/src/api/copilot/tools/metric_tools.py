@@ -4,6 +4,9 @@ import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 
+from langsmith import traceable, get_current_run_tree
+from langchain_core.tools import tool
+
 from api.models.db_models import (
     DerivedMetricValue, DerivedMetricDefinition, FinancialFact, FinancialFactVersion, SourceLocation, Document
 )
@@ -47,6 +50,17 @@ def _eval_ast_node(node: ast.AST, variables: Dict[str, float]) -> float:
     else:
         raise ValueError(f"Unsupported AST expression: {type(node)}")
 
+
+@tool
+@traceable(
+    name="evaluate_formula",
+    run_type="tool",
+    metadata={
+        "description": "Deterministically evaluates a mathematical formula expression using Python's AST. Guarantees no arbitrary code execution.",
+        "input": ["expression", "variables"],
+        "output": ["status", "result"]
+    }
+)
 def evaluate_formula(expression: str, variables: Dict[str, float]) -> Dict[str, Any]:
     """
     Deterministically evaluates a mathematical formula expression using Python's AST.
@@ -70,6 +84,16 @@ def evaluate_formula(expression: str, variables: Dict[str, float]) -> Dict[str, 
             "error": str(e)
         }
 
+@tool
+@traceable(
+    name="get_company_metrics",
+    run_type="tool",
+    metadata={
+        "description": "Fetches all calculated derived metrics for a company across all 6 financial categories.",
+        "input": ["company_id", "fiscal_year"],
+        "output": ["metrics_count", "metrics"]
+    }
+)
 def get_company_metrics(db: Session, company_id: int, fiscal_year: Optional[int] = None) -> Dict[str, Any]:
     """
     Fetches all calculated derived metrics for a company across all 6 financial categories.
@@ -106,6 +130,16 @@ def get_company_metrics(db: Session, company_id: int, fiscal_year: Optional[int]
         "metrics": metrics_summary
     }
 
+@tool
+@traceable(
+    name="get_metric_history",
+    run_type="tool",
+    metadata={
+        "description": "Fetches multi-year historical time series for a single metric.",
+        "input": ["company_id", "metric_name"],
+        "output": ["history_count", "history"]
+    }
+)
 def get_metric_history(db: Session, company_id: int, metric_name: str) -> Dict[str, Any]:
     """
     Fetches multi-year historical time series for a single metric.
@@ -134,6 +168,16 @@ def get_metric_history(db: Session, company_id: int, metric_name: str) -> Dict[s
         "history": history
     }
 
+@tool
+@traceable(
+    name="get_fact_lineage",
+    run_type="tool",
+    metadata={
+        "description": "Resolves the exact constituent facts, formulas, and bounding-box citations for a derived KPI. Returns structured results and CitationSource items.",
+        "input": ["company_id", "metric_name", "fiscal_year"],
+        "output": ["status", "citations"]
+    }
+)
 def get_fact_lineage(db: Session, company_id: int, metric_name: str, fiscal_year: int) -> Dict[str, Any]:
     """
     Resolves the exact constituent facts, formulas, and bounding-box citations for a derived KPI.

@@ -1,6 +1,8 @@
 import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+from langsmith import traceable, get_current_run_tree
+from langchain_core.tools import tool
 
 from api.models.db_models import (
     FinancialFact, FinancialFactVersion, DataQualityIssue, AuditEvent
@@ -8,6 +10,16 @@ from api.models.db_models import (
 
 logger = logging.getLogger(__name__)
 
+@tool
+@traceable(
+    name="get_unverified_facts",
+    run_type="tool",
+    metadata={
+        "description": "Fetches all financial facts for a company that have not yet been verified by a human analyst.",
+        "input": ["company_id"],
+        "output": ["unverified_count", "facts"]
+    }
+)
 def get_unverified_facts(db: Session, company_id: int) -> Dict[str, Any]:
     """
     Fetches all financial facts for a company that have not yet been verified by a human analyst.
@@ -40,6 +52,16 @@ def get_unverified_facts(db: Session, company_id: int) -> Dict[str, Any]:
         "facts": unverified_list
     }
 
+@tool
+@traceable(
+    name="get_data_quality_issues",
+    run_type="tool",
+    metadata={
+        "description": "Fetches accounting discrepancies, balance check mismatches, and reconciliation issues.",
+        "input": ["company_id"],
+        "output": ["active_issues_count", "issues"]
+    }
+)
 def get_data_quality_issues(db: Session, company_id: int) -> Dict[str, Any]:
     """
     Fetches accounting discrepancies, balance check mismatches, and reconciliation issues.
@@ -67,6 +89,16 @@ def get_data_quality_issues(db: Session, company_id: int) -> Dict[str, Any]:
         "issues": issue_list
     }
 
+@tool
+@traceable(
+    name="get_fact_audit_trail",
+    run_type="tool",
+    metadata={
+        "description": "Fetches the bi-temporal audit log and modification history for a specific financial fact.",
+        "input": ["fact_id"],
+        "output": ["event_count", "audit_events"]
+    }
+)
 def get_fact_audit_trail(db: Session, fact_id: int) -> Dict[str, Any]:
     """
     Fetches the bi-temporal audit log and modification history for a specific financial fact.

@@ -4,11 +4,24 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+from langsmith import traceable, get_current_run_tree
+from langchain_core.tools import tool
+
 from api.models.db_models import DocumentChunk, Document, SourceLocation
 from api.copilot.schemas.citation_schemas import CitationSource
 
 logger = logging.getLogger(__name__)
 
+@tool
+@traceable(
+    name="search_filing_chunks_hybrid",
+    run_type="tool",
+    metadata={
+        "description": "Executes Agentic Hybrid Retrieval combining vector cosine similarity and lexical keyword matching.",
+        "input": ["query", "company_id", "fiscal_year", "section_filter"],
+        "output": ["retrieved_count", "chunks", "citations"]
+    }
+)
 def search_filing_chunks_hybrid(
     db: Session,
     query: str,
@@ -116,6 +129,16 @@ def search_filing_chunks_hybrid(
         "citations": [cit.model_dump() for cit in citations]
     }
 
+@tool
+@traceable(
+    name="count_concept_frequency",
+    run_type="tool",
+    metadata={
+        "description": "Counts exact occurrence frequencies for given financial terms across filing chunks. Used for Word Cloud visualizations and topical prominence charts.",
+        "input": ["company_id", "terms", "document_id"],
+        "output": ["term_frequencies"]
+    }
+)
 def count_concept_frequency(
     db: Session,
     company_id: int,
@@ -162,6 +185,16 @@ def count_concept_frequency(
         "term_frequencies": sorted_counts
     }
 
+@tool
+@traceable(
+    name="get_page_content",
+    run_type="tool",
+    metadata={
+        "description": "Fetches raw text chunks and bounding boxes for an exact document page.",
+        "input": ["document_id", "page_number"],
+        "output": ["chunk_count", "text", "sections"]
+    }
+)
 def get_page_content(db: Session, document_id: int, page_number: int) -> Dict[str, Any]:
     """
     Fetches raw text chunks and bounding boxes for an exact document page.
