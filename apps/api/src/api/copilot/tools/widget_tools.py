@@ -2,21 +2,11 @@ from typing import Dict, Any, List, Optional, Literal
 from api.copilot.schemas.widget_schemas import (
     LineChartSpec, BarChartSpec, PieChartSpec, WordCloudSpec, TableWidgetSpec, ChartSeriesConfig, ChartWidgetPayload
 )
-from langsmith import traceable, get_current_run_tree
+from langsmith import traceable
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
 
-@tool
-@traceable(
-    name="build_line_chart_spec",
-    run_type="tool",
-    metadata={
-        "description": "Builds a structured LineChartSpec from raw data and series configuration.",
-        "input": ["title", "series", "data"],
-        "output": ["LineChartSpec"]
-    }
-)
-def build_line_chart_spec(
+def build_line_chart_spec_impl(
     title: str,
     series: List[Dict[str, str]],
     data: List[Dict[str, Any]],
@@ -32,17 +22,7 @@ def build_line_chart_spec(
         unit=unit
     )
 
-@tool
-@traceable(
-    name="build_bar_chart_spec",
-    run_type="tool",
-    metadata={
-        "description": "Builds a structured BarChartSpec from raw data and series configuration.",
-        "input": ["title", "series", "data"],
-        "output": ["BarChartSpec"]
-    }
-)
-def build_bar_chart_spec(
+def build_bar_chart_spec_impl(
     title: str,
     series: List[Dict[str, str]],
     data: List[Dict[str, Any]],
@@ -58,18 +38,7 @@ def build_bar_chart_spec(
         unit=unit
     )
 
-
-@tool
-@traceable(
-    name="build_pie_chart_spec",
-    run_type="tool",
-    metadata={
-        "description": "Builds a structured PieChartSpec from raw data.",
-        "input": ["title", "data"],
-        "output": ["PieChartSpec"]
-    }
-)
-def build_pie_chart_spec(
+def build_pie_chart_spec_impl(
     title: str,
     data: List[Dict[str, Any]],
     description: Optional[str] = None,
@@ -82,18 +51,7 @@ def build_pie_chart_spec(
         unit=unit
     )
 
-
-@tool
-@traceable(
-    name="build_word_cloud_spec",
-    run_type="tool",
-    metadata={
-        "description": "Builds a structured WordCloudSpec from word frequency data.",
-        "input": ["title", "word_cloud_data"],
-        "output": ["WordCloudSpec"]
-    }
-)
-def build_word_cloud_spec(
+def build_word_cloud_spec_impl(
     title: str,
     word_cloud_data: List[Dict[str, Any]],
     description: Optional[str] = None
@@ -104,18 +62,7 @@ def build_word_cloud_spec(
         wordCloudData=word_cloud_data
     )
 
-
-@tool
-@traceable(
-    name="build_fallback_table_spec",
-    run_type="tool",
-    metadata={
-        "description": "Builds a fallback TableWidgetSpec when chart validation fails.",
-        "input": ["title", "raw_data"],
-        "output": ["TableWidgetSpec"]
-    }
-)
-def build_fallback_table_spec(
+def build_fallback_table_spec_impl(
     title: str,
     raw_data: List[Dict[str, Any]],
     description: Optional[str] = "Data Table (Chart validation limit reached)"
@@ -127,6 +74,61 @@ def build_fallback_table_spec(
         columns=columns,
         rows=raw_data
     )
+
+@tool
+@traceable(name="build_line_chart_spec", run_type="tool")
+def build_line_chart_spec(
+    title: str,
+    series: List[Dict[str, str]],
+    data: List[Dict[str, Any]],
+    description: Optional[str] = None,
+    unit: Optional[str] = None
+) -> LineChartSpec:
+    """Builds a structured LineChartSpec from raw time series data and series configuration."""
+    return build_line_chart_spec_impl(title, series, data, description, unit)
+
+@tool
+@traceable(name="build_bar_chart_spec", run_type="tool")
+def build_bar_chart_spec(
+    title: str,
+    series: List[Dict[str, str]],
+    data: List[Dict[str, Any]],
+    description: Optional[str] = None,
+    unit: Optional[str] = None
+) -> BarChartSpec:
+    """Builds a structured BarChartSpec from comparison data and series configuration."""
+    return build_bar_chart_spec_impl(title, series, data, description, unit)
+
+@tool
+@traceable(name="build_pie_chart_spec", run_type="tool")
+def build_pie_chart_spec(
+    title: str,
+    data: List[Dict[str, Any]],
+    description: Optional[str] = None,
+    unit: Optional[str] = None
+) -> PieChartSpec:
+    """Builds a structured PieChartSpec from component breakdown data."""
+    return build_pie_chart_spec_impl(title, data, description, unit)
+
+@tool
+@traceable(name="build_word_cloud_spec", run_type="tool")
+def build_word_cloud_spec(
+    title: str,
+    word_cloud_data: List[Dict[str, Any]],
+    description: Optional[str] = None
+) -> WordCloudSpec:
+    """Builds a structured WordCloudSpec from word frequency data."""
+    return build_word_cloud_spec_impl(title, word_cloud_data, description)
+
+@tool
+@traceable(name="build_fallback_table_spec", run_type="tool")
+def build_fallback_table_spec(
+    title: str,
+    raw_data: List[Dict[str, Any]],
+    description: Optional[str] = "Data Table (Chart validation limit reached)"
+) -> TableWidgetSpec:
+    """Builds a fallback TableWidgetSpec when chart validation fails."""
+    return build_fallback_table_spec_impl(title, raw_data, description)
 
 # exposing the tools as a structured tool node for Graph Builder
 WIDGET_TOOL_NODE = ToolNode([
