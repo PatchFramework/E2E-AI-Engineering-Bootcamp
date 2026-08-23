@@ -95,12 +95,31 @@ any conflicting notes in the original drafts.
   - **Details**: The Copilot is elevated to the global application layout (`App.tsx`), accessible on all screens with a horizontal drag-to-resize handle (dynamic width between 360px and 800px) and a toggle-to-collapse trigger.
   - **Rationale**: Analysts need side-by-side access to the Copilot during filing uploads, KPI inspection, and fact corrections. Resizing allows expanding the panel when viewing complex dynamic data visualizations.
 
-- **Decision**: Orchestrator-Subagent Graph Architecture with Context-on-Demand.
+- **Decision**: Centralized Hub-and-Spoke Topology with Dynamic Plan Re-evaluation.
   - **Details**: 
-    - The copilot is built as a LangGraph orchestrator agent that plans multi-step executions and delegates to specialized sub-agents (`FinancialMetricAgent`, `AgenticRAGAgent`, `DataQualityAgent`, `GenUIWidgetAgent`) or directly answers conversational questions (`DIRECT_ANSWER`).
-    - Tool schemas are strictly compartmentalized inside their respective sub-agents to avoid LLM tool overchoice and context bloat.
-    - Active UI context (`contextSnapshot`: active KPI, active facts, active documents) is stored in graph state metadata on demand, rather than dumped in the system prompt.
-  - **Rationale**: Handles complex composite queries (e.g., "Analyze EBITDA and Debt trends for 5 years, then create a bar chart") cleanly while keeping tool schemas focused and token usage minimal.
+    - The Copilot is built as a LangGraph Hub-and-Spoke state graph where the **Orchestrator Hub** generates structured execution plans (`OrchestrationPlan`), delegates targeted subtasks to specialized subagents (`FinancialMetricAgent`, `AgenticRAGAgent`, `DataQualityAgent`, `GenUIWidgetAgent`), and inspects subagent outputs upon completion.
+    - Subagents always report back to the Orchestrator Hub rather than daisy-chaining directly between themselves. This enables the Orchestrator to assess if output goals were met, dynamically refine the plan if information is missing or unexpected, and assign subsequent steps with full awareness.
+  - **Rationale**: Keeps graph topology manageable, prevents uncontrolled inter-subagent cascades, and enables dynamic replanning based on intermediate evidence.
+
+- **Decision**: Forced Tool Calling (`tool_choice="required"`) Across Subagents.
+  - **Details**: Every domain subagent binds its compartmentalized tool suite using `ChatOpenAI.bind_tools(tools, tool_choice="required")`.
+  - **Rationale**: Prevents LLMs from attempting internal unverified mental arithmetic or hallucinated facts. Forces deterministic computation and verifiable SQL/vector retrieval.
+
+- **Decision**: Subagent Substate Isolation & Tool Call Error Tracking.
+  - **Details**: Each subagent operates on its own dedicated substate (`SubagentSubstate`) with fields for `task_description`, `iteration_count`, `tool_call_history` (`ToolCallRecord`), `internal_messages`, and `final_summary`. If a tool execution fails, the error status and message are stored in history, allowing the subagent to iterate and correct arguments rather than crashing.
+  - **Rationale**: Isolates scratchpad context to avoid cross-agent context contamination, and allows self-healing retry loops within subagent execution cycles.
+
+- **Decision**: Clean Chronological Event Timeline (`clean_event_history`) for Synthesis.
+  - **Details**: Instead of passing raw SQL dumps, unformatted JSON arrays, or verbose tool messages to the Synthesizer, an append-only timeline reducer (`append_clean_events`) records structured `CleanEvent` items (`USER_QUERY`, `ORCHESTRATOR_PLAN`, `DELEGATED_TASK`, `SUBAGENT_ANSWER`, `GEN_UI_SPEC`, `PLAN_REFINED`). The Synthesizer consumes this clean narrative to produce final markdown credit memos.
+  - **Rationale**: Prevents prompt token bloat in the synthesis step, eliminates hallucinations from noisy raw data, and aligns the synthesizer's mental model directly with the orchestrator's decision trail.
+
+- **Decision**: Comprehensive Token & Cost Accounting across LangGraph Nodes.
+  - **Details**: All nodes record token consumption into an accumulated token usage dictionary (`accumulate_tokens` reducer). Token counts (`prompt_tokens`, `completion_tokens`, `cached_tokens`, `reasoning_tokens`, `total_tokens`) are recorded in LangSmith trace runs, persisted in PostgreSQL `chat_messages.tool_calls`, and emitted in the SSE `done` event.
+  - **Rationale**: Provides granular visibility into LLM operating costs, token distribution per subagent, and cache efficiency.
+
+- **Decision**: Generative UI Tool Binding with 3-Retry Self-Correction Loop.
+  - **Details**: For visual answers, the GenUI agent binds typed chart constructor tools (`build_line_chart_spec`, `build_bar_chart_spec`, `build_pie_chart_spec`, `build_word_cloud_spec`) with `tool_choice="required"`. Specs are validated against strict Pydantic schemas in a dedicated validator node with up to 3 automatic correction retries before gracefully degrading to `TableWidgetSpec`. The frontend renders them with Recharts and provides one-click PNG/SVG download.
+  - **Rationale**: Delivers interactive, responsive native visualizations without arbitrary code execution risks, with guaranteed schema safety and exportability.
 
 - **Decision**: Agentic Hybrid RAG with Keyword/Dense Weighting & Tunable Scope.
   - **Details**: Vector search in `pgvector` is upgraded to Agentic Hybrid RAG where the agent can dynamically tune semantic vs. exact keyword matching (BM25/PostgreSQL full-text) and set retrieval bounds (`limit`, `section_filter`). Exact keyword search is used for term frequency and word cloud generation.
@@ -114,10 +133,6 @@ any conflicting notes in the original drafts.
   - **Details**: All retrieved context, SQL facts, and filing chunks are structured via a Pydantic `CitationSource` schema with exact page numbers, displayed page numbers, and bounding-box coordinates. Citations are emitted both inline and as a complete structured appendix in the SSE event payload for analyst verification.
   - **Rationale**: Ensures complete, verifiable evidence provenance and zero hallucinated sources.
 
-- **Decision**: Generative UI Native Widgets with Pydantic Validation & Image Export.
-  - **Details**: For visual answers, the agent produces structured JSON widget specifications (Line charts, Bar charts, Pie charts, Word Clouds). Specs are validated against strict Pydantic schemas in a dedicated graph validation node with automatic LLM self-correction retries if malformed. The frontend renders them with Recharts and provides one-click PNG/SVG download.
-  - **Rationale**: Delivers interactive, responsive native visualizations without arbitrary code execution risks, with guaranteed schema safety and exportability.
-
 - **Decision**: Conversation Token Budgeting, State Pruning & Graph Cancellation.
   - **Details**:
     - LangGraph state pruning cleans out intermediate tool execution payloads older than 3 turns.
@@ -129,6 +144,7 @@ any conflicting notes in the original drafts.
 - **Decision**: SSE Streaming, Human-Friendly Reasoning States & PostgreSQL Session Persistence.
   - **Details**: The agent communicates over Server-Sent Events (SSE), streaming tokens and human-friendly reasoning step updates (`"Searching filing debt schedule..."`, `"Calculating 5-year leverage history..."`). Analysts can abort active generations, start fresh chat sessions, and switch between past conversations persisted in PostgreSQL (`chat_sessions`, `chat_messages`).
   - **Rationale**: Delivers high responsiveness, clear visibility into backend tool executions, and audit-compliant conversation tracking.
+
 
 
 

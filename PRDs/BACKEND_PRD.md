@@ -1,34 +1,36 @@
 # AI Copilot Backend Architecture & Tools
 
-The Underwriting Copilot is implemented as an orchestrated **LangGraph Orchestrator-Subagent Graph** leveraging **LangSmith prompt versioning & tracing**, deterministic calculation tools, agentic hybrid pgvector retrieval, and validated Generative UI widget output.
+The Underwriting Copilot is implemented as an orchestrated **LangGraph Hub-and-Spoke Multi-Agent StateGraph** leveraging **LangSmith prompt versioning & tracing**, deterministic calculation tools, agentic hybrid pgvector retrieval, isolated subagent substates, forced tool execution (`tool_choice="required"`), clean chronological event synthesis, and validated Generative UI chart widget generation.
 
-## LangGraph Orchestrator-Subagent Architecture
+## LangGraph Hub-and-Spoke Multi-Agent Architecture
 
 ```mermaid
 flowchart TD
-    User["Analyst Query + Ingested Context Snapshot"] --> Orchestrator["Orchestrator Agent (LangGraph Plan & Route)"]
+    User["Analyst Query + Ingested Context Snapshot"] --> Orchestrator["Orchestrator Hub (LangGraph Dynamic Plan, Delegate & Re-evaluate)"]
     
     Orchestrator -->|Direct Answer / Greeting| DirectResponse["Direct Answer Synthesizer"]
-    Orchestrator -->|Decompose Plan / Metrics| FinAgent["Financial Metric Sub-Agent"]
-    Orchestrator -->|Filing Research / Risk Factors| DocAgent["Agentic RAG Sub-Agent"]
-    Orchestrator -->|Accounting Reconciliations| QualAgent["Data Quality & Audit Sub-Agent"]
+    Orchestrator -->|Delegate Subtask: METRICS| FinAgent["Financial Metric Sub-Agent\n(tool_choice='required')"]
+    Orchestrator -->|Delegate Subtask: FILING_SEARCH| DocAgent["Agentic RAG Sub-Agent\n(tool_choice='required')"]
+    Orchestrator -->|Delegate Subtask: QUALITY_AUDIT| QualAgent["Data Quality & Audit Sub-Agent\n(tool_choice='required')"]
+    Orchestrator -->|Delegate Subtask: GEN_UI| GenUIAgent["Generative UI Chart Sub-Agent\n(tool_choice='required')"]
     
     FinAgent --> FinTools["SQL Facts + MetricCalculationService"]
     DocAgent --> RagTools["Agentic Hybrid Search (BM25 + pgvector)"]
     QualAgent --> QualTools["Data Quality Issues + Audit Events"]
+    GenUIAgent --> WidgetTools["Chart Constructor Tools\n(Line, Bar, Pie, Word Cloud)"]
     
-    FinTools --> GenUIAgent["Generative UI Chart Sub-Agent"]
-    RagTools --> GenUIAgent
+    FinTools -->|"Return Findings & Substate"| Orchestrator
+    RagTools -->|"Return Citations & Substate"| Orchestrator
+    QualTools -->|"Return Issues & Substate"| Orchestrator
     
-    GenUIAgent --> WidgetValidator["Pydantic Chart Validator & Self-Correction Node"]
+    WidgetTools --> WidgetValidator["Pydantic Chart Validator Node"]
+    WidgetValidator -->|"ValidationError (retries < 3)"| GenUIAgent
+    WidgetValidator -->|"Valid Spec / Table Fallback (retries >= 3)"| Orchestrator
     
-    FinTools --> Synthesis["Synthesis, Citations & Appendix Builder"]
-    RagTools --> Synthesis
-    QualTools --> Synthesis
-    WidgetValidator --> Synthesis
+    Orchestrator -->|"Plan Complete / All Findings Gathered"| Synthesis["Synthesizer Node\n(Consumes clean_event_history & Embeds Widget)"]
     DirectResponse --> Synthesis
     
-    Synthesis --> SSE["SSE Stream Output (Tokens + Status + Widgets + Citations)"]
+    Synthesis --> SSE["SSE Stream Output (Tokens + Status + Widgets + Citations + Token Accounting)"]
 ```
 
 ## SSE Streaming Protocol
@@ -37,9 +39,9 @@ Emits real-time event frames:
 - `event: status` -> `{"step": "search", "message": "Searching FY2025 Debt Schedule for credit terms..."}`
 - `event: token` -> `{"content": "Acme Corp reported net debt of €840M..."}`
 - `event: widget` -> `{"widgetType": "chart", "spec": { ... validated Pydantic JSON ... }}`
-- `event: citations` -> `[{"document_id": 2, "page_number": 42, "displayed_page": "p. 42", "bounding_box": [120, 340, 500, 480], "snippet": "..."}]`
-- `event: trace` -> `{"run_id": "langsmith-run-uuid"}`
-- `event: done` -> `{"session_id": "...", "message_id": "..."}`
+- `event: citations` -> `[{"documentId": 2, "pageNumber": 42, "displayedPage": "p. 42", "boundingBox": [120, 340, 500, 480], "snippet": "..."}]`
+- `event: trace` -> `{"run_id": "langsmith-run-uuid", "model": "gpt-4o"}`
+- `event: done` -> `{"session_id": "...", "message_id": "...", "turn_count": 2, "token_usage": {"prompt_tokens": 1200, "completion_tokens": 350, "total_tokens": 1550}}`
 
 ---
 
@@ -48,15 +50,17 @@ Emits real-time event frames:
 All tools operate deterministically or through constrained SQL/pgvector queries with strict parameter injection (`company_id` is locked in graph state):
 
 ### 1. Financial Data & Deterministic Calculations (Financial Metric Sub-Agent)
+Bound via `create_metric_tools(db)` with `tool_choice="required"`:
 ```python
-get_current_metric(company_id: int, metric_name: str, fiscal_year: Optional[int]) -> MetricValue
-get_company_metrics(company_id: int, fiscal_year: Optional[int]) -> List[MetricValue]
-get_metric_history(company_id: int, metric_name: str) -> List[HistoricalPoint]
-get_fact_lineage(company_id: int, metric_name: str, fiscal_year: int) -> MetricLineage
-calculate_custom_formula(expression: str, values: Dict[str, float]) -> CalculationResult
+get_current_metric(company_id: int, metric_name: str, fiscal_year: Optional[int]) -> Dict[str, Any]
+get_company_metrics(company_id: int, fiscal_year: Optional[int]) -> Dict[str, Any]
+get_metric_history(company_id: int, metric_name: str) -> Dict[str, Any]
+get_fact_lineage(company_id: int, metric_name: str, fiscal_year: int) -> Dict[str, Any]
+evaluate_formula(expression: str, variables: Dict[str, float]) -> Dict[str, Any]
 ```
 
 ### 2. Agentic Hybrid Document Retrieval & Text Analytics (Agentic RAG Sub-Agent)
+Bound via `create_retrieval_tools(db)` with `tool_choice="required"`:
 ```python
 search_filing_chunks_hybrid(
     query: str, 
@@ -65,32 +69,54 @@ search_filing_chunks_hybrid(
     section_filter: Optional[str] = None, 
     dense_weight: float = 0.5,       # 1.0 = pure vector cosine, 0.0 = pure keyword BM25/tsvector
     keyword_query: Optional[str] = None,
-    limit: int = 5                   # Agent dynamically tunes retrieval budget (1 to 15)
-) -> List[GroundedChunkResult]
+    limit: int = 5                   # Agent dynamically tunes retrieval budget (1 to 100)
+) -> Dict[str, Any]
 
-get_page_content(document_id: int, page_number: int) -> PageDetails
-count_concept_frequency(company_id: int, terms: List[str], document_id: Optional[int] = None) -> Dict[str, int]
+get_page_content(document_id: int, page_number: int) -> Dict[str, Any]
+count_concept_frequency(company_id: int, terms: List[str], document_id: Optional[int] = None) -> Dict[str, Any]
 ```
 
 ### 3. Data Quality & Audit Trail (Data Quality Sub-Agent)
+Bound via `create_audit_tools(db)` with `tool_choice="required"`:
 ```python
-get_unverified_facts(company_id: int) -> List[UnverifiedFact]
-get_data_quality_issues(company_id: int) -> List[QualityIssue]
-get_fact_audit_trail(fact_id: int) -> List[AuditEvent]
+get_unverified_facts(company_id: int) -> Dict[str, Any]
+get_data_quality_issues(company_id: int) -> Dict[str, Any]
+get_fact_audit_trail(fact_id: int) -> Dict[str, Any]
 ```
 
-### 4. Generative UI Widget Generator & Pydantic Validator Node (GenUI Sub-Agent)
+### 4. Generative UI Chart Constructors & Pydantic Validator (GenUI Sub-Agent)
+Bound via `create_widget_tools()` with `tool_choice="required"`:
 ```python
-generate_chart_widget(
-    chart_type: Literal["line", "bar", "pie", "word_cloud"],
+build_line_chart_spec(
     title: str,
-    description: Optional[str],
-    series: List[ChartSeriesConfig],
+    series: List[Dict[str, str]],    # [{'key': 'leverage', 'label': 'Net Debt / EBITDA'}]
+    data: List[Dict[str, Any]],      # [{'year': '2021', 'leverage': 3.10}, ...]
+    description: Optional[str] = None,
+    unit: Optional[str] = None
+) -> LineChartSpec
+
+build_bar_chart_spec(
+    title: str,
+    series: List[Dict[str, str]],
     data: List[Dict[str, Any]],
-    unit: Optional[str]
-) -> ChartWidgetPayload
+    description: Optional[str] = None,
+    unit: Optional[str] = None
+) -> BarChartSpec
+
+build_pie_chart_spec(
+    title: str,
+    data: List[Dict[str, Any]],      # [{'name': 'Senior Notes', 'value': 650}, ...]
+    description: Optional[str] = None,
+    unit: Optional[str] = None
+) -> PieChartSpec
+
+build_word_cloud_spec(
+    title: str,
+    word_cloud_data: List[Dict[str, Any]], # [{'text': 'Covenants', 'value': 24}, ...]
+    description: Optional[str] = None
+) -> WordCloudSpec
 ```
-* **Validation & Self-Correction Node**: Validates series keys, data keys, and palettes. If `ValidationError` is encountered, it is reflected back into the agent context for an immediate automatic 1-retry regeneration before failing to a table fallback.
+* **Validation & Self-Correction Node**: Validates chart candidates against Pydantic schemas (`LineChartSpec`, `BarChartSpec`, `PieChartSpec`, `WordCloudSpec`). If `ValidationError` is encountered, exact field error messages are reflected back into `gen_ui` substate for up to 3 automatic correction retries before gracefully falling back to a `TableWidgetSpec`.
 
 ### 5. Grounded Citation & Evidence Provenance Schema
 ```python
@@ -106,6 +132,14 @@ class CitationSource(BaseModel):
     source_type: Literal["FILING_CHUNK", "STRUCTURED_FACT", "AUDIT_EVENT"]
 ```
 All sources retrieved by any sub-agent are automatically tracked in the graph state's `retrieved_sources` registry and appended to the final response envelope for analyst inspection.
+
+### 6. Subagent Substate Isolation & Clean Event Timeline Reducers
+- **Substate Isolation (`SubagentSubstate`)**:
+  Each subagent operates on its own dedicated substate (`task_description`, `iteration_count`, `max_iterations`, `tool_call_history`, `internal_messages`, `final_summary`). Tool failures are recorded with status `"ERROR"` so retry attempts avoid repeating malformed arguments.
+- **Chronological Timeline (`clean_event_history`)**:
+  Appends structured event entries (`USER_QUERY`, `ORCHESTRATOR_PLAN`, `DELEGATED_TASK`, `SUBAGENT_ANSWER`, `GEN_UI_SPEC`, `PLAN_REFINED`) via `append_clean_events`. The Synthesizer consumes this clean high-level narrative instead of raw tool payloads.
+- **Token Accounting (`accumulate_tokens`)**:
+  Merges prompt, completion, cached, reasoning, and total token usage across all graph nodes for cost tracking and LangSmith observability.
 
 ---
 

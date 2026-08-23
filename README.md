@@ -22,6 +22,7 @@
   - [Workflow 1: Intelligent Filing Ingestion & Pipeline Orchestration](#workflow-1-intelligent-filing-ingestion--pipeline-orchestration)
   - [Workflow 2: Fact Versioning, Verification & Audit Trails](#workflow-2-fact-versioning-verification--audit-trails)
   - [Workflow 3: Deterministic KPI Engine & Relational Lineage](#workflow-3-deterministic-kpi-engine--relational-lineage)
+  - [Workflow 4: Hub-and-Spoke Multi-Agent Credit Underwriting Copilot](#workflow-4-hub-and-spoke-multi-agent-credit-underwriting-copilot)
 - [⚙️ Prerequisites & Environment Setup](#️-prerequisites--environment-setup)
 - [🚀 Quickstart (Docker Compose)](#-quickstart-docker-compose)
   - [Service Access Endpoints](#service-access-endpoints)
@@ -347,6 +348,36 @@ flowchart LR
     Facts --> CalculationEngine
     CalculationEngine --> Result
     Result --- Provenance
+```
+
+---
+
+### Workflow 4: Hub-and-Spoke Multi-Agent Credit Underwriting Copilot
+
+The AI Underwriting Copilot orchestrates specialized subagents over a **LangGraph Hub-and-Spoke StateGraph** with forced tool execution (`tool_choice="required"`), isolated subagent substates, clean chronological event synthesis, and dynamic replanning:
+
+```mermaid
+flowchart TD
+    User["Analyst Query + Ingested Context Snapshot"] --> Orchestrator["Orchestrator Hub (Dynamic Plan & Task Delegation)"]
+    
+    Orchestrator -->|Direct Answer / Greeting| DirectResponse["Direct Answer Synthesizer"]
+    Orchestrator -->|Delegate Subtask: METRICS| FinAgent["Financial Metric Sub-Agent\n(tool_choice='required')"]
+    Orchestrator -->|Delegate Subtask: FILING_SEARCH| DocAgent["Agentic RAG Sub-Agent\n(tool_choice='required')"]
+    Orchestrator -->|Delegate Subtask: QUALITY_AUDIT| QualAgent["Data Quality & Audit Sub-Agent\n(tool_choice='required')"]
+    Orchestrator -->|Delegate Subtask: GEN_UI| GenUIAgent["Generative UI Chart Sub-Agent\n(tool_choice='required')"]
+    
+    FinAgent -->|"Return Findings & Substate"| Orchestrator
+    DocAgent -->|"Return Grounded Citations & Substate"| Orchestrator
+    QualAgent -->|"Return Audit Discrepancies & Substate"| Orchestrator
+    
+    GenUIAgent --> WidgetValidator["Pydantic Chart Validator Node"]
+    WidgetValidator -->|"ValidationError (retries < 3)"| GenUIAgent
+    WidgetValidator -->|"Valid Spec / Table Fallback"| Orchestrator
+    
+    Orchestrator -->|"Plan Complete / Re-evaluated"| Synthesis["Synthesizer Node\n(Consumes clean_event_history & Embeds Widget)"]
+    DirectResponse --> Synthesis
+    
+    Synthesis --> SSE["SSE Stream Output (Tokens + Status + Widgets + Citations + Token Accounting)"]
 ```
 
 ---
