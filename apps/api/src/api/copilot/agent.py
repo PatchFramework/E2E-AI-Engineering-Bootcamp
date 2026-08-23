@@ -10,16 +10,18 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langsmith import traceable
 
 from api.models.db_models import ChatSession, ChatMessage
-from api.copilot.graph import build_copilot_graph
+from api.copilot.graph import copilot_graph, build_copilot_graph
 from api.copilot.state import CopilotGraphState
 from api.copilot.pruning import prune_messages_state
+from api.copilot.llm_client import get_default_model_name, empty_token_usage
 
 logger = logging.getLogger(__name__)
 
 class UnderwritingCopilotService:
     def __init__(self, db: Session):
         self.db = db
-        self.graph = build_copilot_graph(db)
+        # Reuse pre-compiled graph singleton
+        self.graph = copilot_graph
 
     @traceable(name="_fetch_or_create_chat_session_in_db")
     def _fetch_or_create_chat_session_in_db(self, session_id, company_id, user_message):
@@ -88,7 +90,7 @@ class UnderwritingCopilotService:
 
         # Generate run ID and model configuration for LangSmith tracing
         run_id = str(uuid.uuid4())
-        model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        model_name = get_default_model_name()
         run_uuid = uuid.UUID(run_id)
 
         run_config = {
@@ -102,6 +104,9 @@ class UnderwritingCopilotService:
                 "model": model_name,
                 "ls_model_name": model_name,
                 "ls_provider": "openai",
+            },
+            "configurable": {
+                "db": self.db
             }
         }
 
@@ -133,13 +138,7 @@ class UnderwritingCopilotService:
             "run_id": run_id,
             "turn_count": turn_count,
             "model_used": model_name,
-            "token_usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "cached_tokens": 0,
-                "reasoning_tokens": 0,
-                "total_tokens": 0
-            }
+            "token_usage": empty_token_usage()
         }
 
         # 4. Stream Initial Handshake & Status Events

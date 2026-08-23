@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from langgraph.graph import StateGraph, END
 
@@ -16,7 +16,7 @@ from api.copilot.nodes.synthesizer_node import run_synthesizer_node
 
 logger = logging.getLogger(__name__)
 
-def build_copilot_graph(db: Session) -> Any:
+def build_copilot_graph(db: Optional[Session] = None) -> Any:
     """
     Constructs and compiles the full LangGraph StateGraph for the Underwriting Copilot.
     Implements a centralized Hub-and-Spoke multi-agent topology:
@@ -27,11 +27,11 @@ def build_copilot_graph(db: Session) -> Any:
     """
     workflow = StateGraph(CopilotGraphState)
 
-    # 1. Register Agent Nodes
+    # 1. Register Agent Nodes directly
     workflow.add_node("orchestrator", run_orchestrator_node)
-    workflow.add_node("financial_metrics", lambda state: run_financial_metric_agent(state, db))
-    workflow.add_node("agentic_rag", lambda state: run_rag_agent(state, db))
-    workflow.add_node("data_quality", lambda state: run_data_quality_agent(state, db))
+    workflow.add_node("financial_metrics", run_financial_metric_agent)
+    workflow.add_node("agentic_rag", run_rag_agent)
+    workflow.add_node("data_quality", run_data_quality_agent)
     workflow.add_node("gen_ui", run_gen_ui_agent)
     workflow.add_node("widget_validator", validate_widget_node)
     workflow.add_node("synthesizer", run_synthesizer_node)
@@ -103,4 +103,8 @@ def build_copilot_graph(db: Session) -> Any:
     workflow.add_edge("synthesizer", END)
 
     return workflow.compile()
+
+# Precompiled Graph Singleton (compiled once at startup)
+copilot_graph = build_copilot_graph()
+
 
