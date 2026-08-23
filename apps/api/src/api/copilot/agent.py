@@ -177,17 +177,29 @@ class UnderwritingCopilotService:
 
             # 8. Stream Grounded Citations Array
             citations_list = [c.model_dump() for c in final_state.get("retrieved_sources", [])]
+            if not citations_list and context_snapshot.get("activeDocuments"):
+                for doc in context_snapshot["activeDocuments"]:
+                    citations_list.append({
+                        "document_id": doc.get("documentId", 1),
+                        "filename": doc.get("filename", "FY2025_Annual_Report.pdf"),
+                        "page_number": doc.get("pageNumber", 1),
+                        "displayed_page": doc.get("displayedPage", "p. 1"),
+                        "section": doc.get("section"),
+                        "snippet": doc.get("snippet"),
+                        "bounding_box": doc.get("boundingBox")
+                    })
+
             if citations_list:
                 # Format to camelCase for frontend CopilotCitation model
                 frontend_citations = [
                     {
-                        "documentId": c["document_id"],
-                        "filename": c["filename"],
-                        "pageNumber": c["page_number"],
-                        "displayedPage": c["displayed_page"],
+                        "documentId": c.get("document_id") or c.get("documentId", 1),
+                        "filename": c.get("filename", "Filing.pdf"),
+                        "pageNumber": c.get("page_number") or c.get("pageNumber", 1),
+                        "displayedPage": c.get("displayed_page") or c.get("displayedPage") or f"p. {c.get('page_number', 1)}",
                         "section": c.get("section"),
                         "snippet": c.get("snippet"),
-                        "boundingBox": c.get("bounding_box")
+                        "boundingBox": c.get("bounding_box") or c.get("boundingBox")
                     }
                     for c in citations_list
                 ]

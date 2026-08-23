@@ -165,6 +165,13 @@ export default function App() {
                     section={previewCitation.section}
                     boundingBox={previewCitation.boundingBox}
                     snippet={previewCitation.snippet}
+                    onPageChange={(newPage) => {
+                      setPreviewCitation(prev => prev ? {
+                        ...prev,
+                        pageNumber: newPage,
+                        displayedPage: `p. ${newPage}`
+                      } : null);
+                    }}
                   />
                 </div>
               </div>

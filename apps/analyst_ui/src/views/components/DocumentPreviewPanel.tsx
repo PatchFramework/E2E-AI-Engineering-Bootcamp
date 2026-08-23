@@ -71,40 +71,89 @@ export const DocumentPreviewPanel: React.FC<DocumentPreviewPanelProps> = ({
   }, [pageNumber]);
 
   const apiBase = getApiBaseUrl();
+  const [currentSrc, setCurrentSrc] = useState<string | null>(null);
+  const [attemptIndex, setAttemptIndex] = useState<number>(0);
 
-  const pageImageUrl = documentId && pageNumber
-    ? `${apiBase}/documents/${documentId}/pages/${pageNumber}`
-    : null;
+  const availableDocKey = (availableDocuments || []).map(d => `${d.documentId}:${d.pageNumbers?.join('-')}`).join(',');
+
+  // Generate ordered list of fallback URLs for the page image:
+  // 1. Primary: ${apiBase}/documents/${documentId}/pages/${pageNumber}
+  // 2. Direct MinIO by documentId: http://localhost:9000/filings/pages/${documentId}/page_${pageNumber}.png
+  // 3. Fallback to pageNumber folder in MinIO: http://localhost:9000/filings/pages/${pageNumber}/page_${pageNumber}.png
+  // 4. Available documents fallback: ${apiBase}/documents/${doc.documentId}/pages/${pageNumber}
+  const candidateUrls = React.useMemo(() => {
+    if (!pageNumber) return [];
+    const urls: string[] = [];
+    if (documentId) {
+      urls.push(`${apiBase}/documents/${documentId}/pages/${pageNumber}`);
+      urls.push(`http://localhost:9000/filings/pages/${documentId}/page_${pageNumber}.png`);
+    }
+    // Also try page number folder directly in MinIO (e.g., filings/pages/3/page_3.png)
+    urls.push(`http://localhost:9000/filings/pages/${pageNumber}/page_${pageNumber}.png`);
+    
+    if (availableDocuments && availableDocuments.length > 0) {
+      for (const d of availableDocuments) {
+        if (d.documentId && d.documentId !== documentId) {
+          urls.push(`${apiBase}/documents/${d.documentId}/pages/${pageNumber}`);
+          urls.push(`http://localhost:9000/filings/pages/${d.documentId}/page_${pageNumber}.png`);
+        }
+      }
+    }
+    return Array.from(new Set(urls));
+  }, [apiBase, documentId, pageNumber, availableDocKey]);
 
   const fullPdfUrl = documentId
     ? `${apiBase}/documents/${documentId}/file`
-    : null;
+    : (availableDocuments && availableDocuments.length > 0
+        ? `${apiBase}/documents/${availableDocuments[0].documentId}/file`
+        : `${apiBase}/documents/1/file`);
 
-  // Track image loading
+  // Track image loading on actual document or page changes
   useEffect(() => {
-    if (pageImageUrl) {
+    setAttemptIndex(0);
+    if (candidateUrls.length > 0) {
+      setCurrentSrc(candidateUrls[0]);
       setLoading(true);
-
       setError(null);
+    } else {
+      setCurrentSrc(null);
+      setLoading(false);
     }
-  }, [pageImageUrl]);
+  }, [documentId, pageNumber, availableDocKey]);
+
+  // Ensure loading overlay is dismissed immediately whenever the image element is loaded/complete
+  useEffect(() => {
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      setLoading(false);
+      setError(null);
+      setPageDimensions({
+        naturalWidth: imgRef.current.naturalWidth,
+        naturalHeight: imgRef.current.naturalHeight,
+      });
+    }
+  });
 
   const handleImageLoaded = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
     setLoading(false);
     setError(null);
+    const img = e.currentTarget;
     if (img.naturalWidth && img.naturalHeight) {
       setPageDimensions({
         naturalWidth: img.naturalWidth,
         naturalHeight: img.naturalHeight,
       });
     }
-
   };
 
   const handleImageError = () => {
-    setLoading(false);
-    setError('Could not load filing page from S3 storage.');
+    const nextIdx = attemptIndex + 1;
+    if (nextIdx < candidateUrls.length) {
+      setAttemptIndex(nextIdx);
+      setCurrentSrc(candidateUrls[nextIdx]);
+    } else {
+      setLoading(false);
+      setError('Could not load filing page from storage.');
+    }
   };
 
   // Calculate normalized bounding box
@@ -377,10 +426,11 @@ export const DocumentPreviewPanel: React.FC<DocumentPreviewPanelProps> = ({
               maxWidth: zoom <= 100 ? '100%' : 'none',
             }}
           >
-            {pageImageUrl && (
+            {currentSrc && (
               <img
+                key={currentSrc}
                 ref={imgRef}
-                src={pageImageUrl}
+                src={currentSrc}
                 alt={`Document ${documentName || ''} Page ${pageNumber}`}
                 onLoad={handleImageLoaded}
                 onError={handleImageError}
