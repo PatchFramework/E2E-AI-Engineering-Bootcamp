@@ -415,7 +415,12 @@ export function useCopilotController(
 
               // 3. Widget Generative UI Event
               else if (eventType === 'widget' && parsedData) {
-                widgets.push(parsedData);
+                const incoming = Array.isArray(parsedData) ? parsedData : [parsedData];
+                for (const item of incoming) {
+                  if (!widgets.some(w => JSON.stringify(w) === JSON.stringify(item))) {
+                    widgets.push(item);
+                  }
+                }
                 setMessagesForCurrentSession(prev =>
                   prev.map(m => (m.id === assistantMsgId ? { ...m, widgets: [...widgets] } : m))
                 );
@@ -465,7 +470,12 @@ export function useCopilotController(
                     citations = parsedData.citations;
                   }
                   if (parsedData.widget) {
-                    widgets.push(parsedData.widget);
+                    const incoming = Array.isArray(parsedData.widget) ? parsedData.widget : [parsedData.widget];
+                    for (const item of incoming) {
+                      if (!widgets.some(existing => JSON.stringify(existing) === JSON.stringify(item))) {
+                        widgets.push(item);
+                      }
+                    }
                   }
                   if (parsedData.status) {
                     setCurrentReasoningStatus(parsedData.status);

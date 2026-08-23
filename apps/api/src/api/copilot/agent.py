@@ -88,7 +88,7 @@ class UnderwritingCopilotService:
 
         # Generate run ID and model configuration for LangSmith tracing
         run_id = str(uuid.uuid4())
-        model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+        model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
         run_uuid = uuid.UUID(run_id)
 
         run_config = {
@@ -174,7 +174,6 @@ class UnderwritingCopilotService:
             final_widget = final_state.get("pending_widget")
             if final_widget:
                 yield f"event: widget\ndata: {json.dumps(final_widget)}\n\n"
-                yield f"data: {json.dumps({'widget': final_widget})}\n\n"
 
             # 8. Stream Grounded Citations Array
             citations_list = [c.model_dump() for c in final_state.get("retrieved_sources", [])]
@@ -193,7 +192,6 @@ class UnderwritingCopilotService:
                     for c in citations_list
                 ]
                 yield f"event: citations\ndata: {json.dumps(frontend_citations)}\n\n"
-                yield f"data: {json.dumps({'citations': frontend_citations})}\n\n"
 
             # 9. Extract total tokens consumed and persist Assistant Response in PostgreSQL
             final_token_usage = final_state.get("token_usage") or {
