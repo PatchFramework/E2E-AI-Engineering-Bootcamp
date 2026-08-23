@@ -23,7 +23,7 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     company_id = state.get("company_id", 1)
     context_snapshot = state.get("context_snapshot") or {}
     company_name = context_snapshot.get("companyName") or f"Company #{company_id}"
-    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
     
     current_token_usage = state.get("token_usage") or {
         "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0

@@ -40,7 +40,7 @@ def run_financial_metric_agent(state: CopilotGraphState, db: Session) -> Dict[st
     task_desc = substate.get("task_description", last_user_msg)
     tool_history: List[ToolCallRecord] = list(substate.get("tool_call_history") or [])
     
-    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o"
+    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
     openai_key = os.getenv("OPENAI_API_KEY")
     current_token_usage = state.get("token_usage") or {
         "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
