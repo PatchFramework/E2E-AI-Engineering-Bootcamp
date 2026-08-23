@@ -115,15 +115,6 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"Synthesizer LLM invoke failed ({e}); building deterministic summary.")
 
-        # Fallback text if LLM was unavailable
-        if not response_text:
-            parts = [f"### Credit Analysis for {company_name}"]
-            for ev in clean_history:
-                if ev.get("event_type") == "SUBAGENT_ANSWER":
-                    parts.append(f"- {ev.get('content')}")
-            if pending_widget:
-                parts.append(f"\nBelow is the generated **{pending_widget.get('title', 'Visualization')}**.")
-            response_text = "\n\n".join(parts)
 
     # 4. Check Turn Limit Cap
     turn_count = state.get("turn_count", 1)

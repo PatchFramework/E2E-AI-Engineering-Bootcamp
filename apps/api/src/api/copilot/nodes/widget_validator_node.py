@@ -7,7 +7,7 @@ from api.copilot.state import CopilotGraphState, CleanEvent
 from api.copilot.schemas.widget_schemas import (
     LineChartSpec, BarChartSpec, PieChartSpec, WordCloudSpec, TableWidgetSpec
 )
-from api.copilot.tools.widget_tools import build_fallback_table_spec
+from api.copilot.tools.widget_tools import build_fallback_table_spec_impl
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def validate_widget_node(state: CopilotGraphState) -> Dict[str, Any]:
             # 3 retries exhausted -> fallback to TableWidgetSpec
             logger.info("Max widget validation retries reached. Degraded to TableWidgetSpec fallback.")
             raw_data = pending.get("data") or pending.get("wordCloudData") or []
-            fallback = build_fallback_table_spec(
+            fallback = build_fallback_table_spec_impl(
                 title=pending.get("title", "Financial Data Table"),
                 raw_data=raw_data if isinstance(raw_data, list) else [],
                 description="Raw Data Table (Automatic fallback after chart validation limit)"

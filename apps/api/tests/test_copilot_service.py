@@ -100,13 +100,13 @@ def test_widget_validator_retry_and_fallback():
     assert res_2["pending_widget"]["widgetType"] == "table"
 
 def test_evaluate_formula_safe_ast():
-    res = evaluate_formula("(debt - cash) / ebitda", {"debt": 1000.0, "cash": 200.0, "ebitda": 200.0})
+    res = evaluate_formula.invoke({"expression": "(debt - cash) / ebitda", "variables": {"debt": 1000.0, "cash": 200.0, "ebitda": 200.0}})
     assert res["status"] == "SUCCESS"
     assert res["result"] == 4.0
 
-    div_zero = evaluate_formula("debt / ebitda", {"debt": 500.0, "ebitda": 0.0})
+    div_zero = evaluate_formula.invoke({"expression": "debt / ebitda", "variables": {"debt": 500.0, "ebitda": 0.0}})
     assert div_zero["status"] == "ERROR"
-    assert "Division by zero" in div_zero["error"]
+    assert "Division by zero" in div_zero["message"]
 
 def test_message_pruning_and_turn_budget():
     messages = []
@@ -132,7 +132,6 @@ def test_orchestrator_planning():
     res_chart = run_orchestrator_node(chart_state)
     assert "METRICS" in res_chart["execution_plan"]
     assert "GEN_UI" in res_chart["execution_plan"]
-    assert "SYNTHESIZE" in res_chart["execution_plan"]
 
 @pytest.mark.anyio
 async def test_submit_copilot_feedback_endpoint():

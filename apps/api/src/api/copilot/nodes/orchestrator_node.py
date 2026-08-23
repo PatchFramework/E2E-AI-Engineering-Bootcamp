@@ -130,46 +130,6 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"Orchestrator structured planning LLM call failed ({e}); using heuristic fallback plan.")
 
-        # Fallback heuristic planner if LLM unavailable
-        if not plan_obj:
-            needs_chart = any(w in q for w in ["chart", "plot", "trend", "visualize", "graph", "pie", "bar", "cloud", "topic"])
-            needs_rag = any(w in q for w in ["filing", "10-k", "10-q", "covenant", "clause", "footnote", "note", "why", "explain", "risk", "cloud", "topic", "mention"])
-            needs_audit = any(w in q for w in ["audit", "discrepancy", "unverified", "reconciliation", "quality", "mismatch", "issue", "corrected"])
-            needs_metrics = any(w in q for w in ["ebitda", "debt", "leverage", "ratio", "margin", "coverage", "liquidity", "cash", "fcf", "growth", "revenue", "formula", "lineage", "metric"]) or needs_chart
-
-            plan: List[str] = []
-            delegations: List[TaskDelegation] = []
-
-            if needs_metrics or not (needs_rag or needs_audit):
-                plan.append("METRICS")
-                delegations.append(TaskDelegation(
-                    agent="METRICS",
-                    task_description=f"Calculate relevant credit ratios and multi-year metrics for query: '{last_user_msg}'."
-                ))
-            if needs_rag:
-                plan.append("FILING_SEARCH")
-                delegations.append(TaskDelegation(
-                    agent="FILING_SEARCH",
-                    task_description=f"Search SEC 10-K/10-Q filing evidence, footnotes, and debt covenants related to: '{last_user_msg}'."
-                ))
-            if needs_audit:
-                plan.append("QUALITY_AUDIT")
-                delegations.append(TaskDelegation(
-                    agent="QUALITY_AUDIT",
-                    task_description="Audit accounting discrepancies and unverified facts."
-                ))
-            if needs_chart:
-                plan.append("GEN_UI")
-                delegations.append(TaskDelegation(
-                    agent="GEN_UI",
-                    task_description=f"Generate a validated ChartWidget visual spec matching the query: '{last_user_msg}'."
-                ))
-
-            plan_obj = OrchestrationPlan(
-                execution_plan=plan,
-                task_delegations=delegations,
-                reasoning=f"Heuristic plan based on keyword detection: {' -> '.join(plan)}"
-            )
 
         # Record Plan Event in Clean History
         new_events.append({
