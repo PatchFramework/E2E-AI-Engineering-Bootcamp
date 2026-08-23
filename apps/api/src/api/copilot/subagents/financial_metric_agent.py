@@ -166,6 +166,17 @@ def run_financial_metric_agent(state: CopilotGraphState, db: Session) -> Dict[st
                 accumulated_subagent_tokens = merge_token_usages(accumulated_subagent_tokens, t_usage2)
                 final_summary = summary_ai.content
 
+                if not new_citations:
+                    # Auto-populate fact lineage citations for active or default metric
+                    if active_metric and active_metric != "None":
+                        fallback_target = active_metric
+                        try:
+                            fallback_lineage = get_fact_lineage_impl(db, company_id, fallback_target, None)
+                            if fallback_lineage.get("citations"):
+                                new_citations.extend([CitationSource(**c) for c in fallback_lineage["citations"]])
+                        except Exception:
+                            pass
+
         except Exception as e:
             logger.warning(f"FinancialMetricAgent LLM tool execution failed ({e}); running deterministic fallback.")
 
@@ -188,13 +199,20 @@ def run_financial_metric_agent(state: CopilotGraphState, db: Session) -> Dict[st
         if target_metric:
             history_res = get_metric_history_impl(db, company_id, target_metric)
             metric_results["history"] = history_res
-            lineage_res = get_fact_lineage_impl(db, company_id, target_metric, 2025)
+            lineage_res = get_fact_lineage_impl(db, company_id, target_metric, None)
             metric_results["lineage"] = lineage_res
             if lineage_res.get("citations"):
                 new_citations.extend([CitationSource(**c) for c in lineage_res["citations"]])
 
         overview = get_company_metrics_impl(db, company_id)
         metric_results["overview"] = overview
+        if not new_citations:
+            try:
+                fallback_lineage = get_fact_lineage_impl(db, company_id, target_metric, None)
+                if fallback_lineage.get("citations"):
+                    new_citations.extend([CitationSource(**c) for c in fallback_lineage["citations"]])
+            except Exception:
+                pass
         final_summary = f"Retrieved {len(metric_results.get('overview', {}).get('metrics', {}))} credit metrics for Company #{company_id}."
 
     # Update substate

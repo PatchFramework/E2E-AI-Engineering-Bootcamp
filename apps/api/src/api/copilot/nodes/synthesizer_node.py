@@ -70,10 +70,10 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
         # Add citations reference summary
         if citations:
             narrative_lines.append("\n### Grounded Evidence Citations:")
-            for cit in citations[:8]:
+            for idx, cit in enumerate(citations[:8]):
                 disp_page = cit.displayed_page or f"p. {cit.page_number}"
                 sec = f" · {cit.section}" if cit.section else ""
-                narrative_lines.append(f"- [{cit.filename} · {disp_page}{sec}]: \"{cit.snippet[:180]}...\"")
+                narrative_lines.append(f"- Citation [{idx}]: [{cit.filename} · {disp_page}{sec}] (markdown link: `[{cit.filename} · {disp_page}](citation:{idx})`): \"{cit.snippet[:180]}...\"")
 
         # Add GenUI note
         if pending_widget:

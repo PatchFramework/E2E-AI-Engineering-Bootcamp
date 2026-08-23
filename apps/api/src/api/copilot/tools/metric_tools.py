@@ -1,6 +1,7 @@
 import ast
 import operator
 import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 
@@ -158,9 +159,22 @@ def get_metric_history_impl(db: Session, company_id: int, metric_name: str) -> D
             "suggestion": "Check valid metric names e.g. 'net_debt_to_ebitda', 'ebitda_margin', 'current_ratio'."
         }
 
-def get_fact_lineage_impl(db: Session, company_id: int, metric_name: str, fiscal_year: int) -> Dict[str, Any]:
+def get_fact_lineage_impl(db: Session, company_id: int, metric_name: str, fiscal_year: Optional[int] = None) -> Dict[str, Any]:
     """Internal implementation for get_fact_lineage."""
     try:
+        if fiscal_year is None:
+            latest_metric = db.query(DerivedMetricValue).filter(
+                DerivedMetricValue.company_id == company_id,
+                DerivedMetricValue.metric_name == metric_name
+            ).order_by(DerivedMetricValue.fiscal_year.desc()).first()
+
+            if not latest_metric:
+                latest_metric = db.query(DerivedMetricValue).filter(
+                    DerivedMetricValue.company_id == company_id
+                ).order_by(DerivedMetricValue.fiscal_year.desc()).first()
+
+            fiscal_year = latest_metric.fiscal_year if latest_metric else datetime.utcnow().year
+
         metric_record = db.query(DerivedMetricValue).filter(
             DerivedMetricValue.company_id == company_id,
             DerivedMetricValue.metric_name == metric_name,
@@ -223,7 +237,7 @@ def get_company_metrics(db: Session, company_id: int, fiscal_year: Optional[int]
 def get_metric_history(db: Session, company_id: int, metric_name: str) -> Dict[str, Any]:
     return get_metric_history_impl(db, company_id, metric_name)
 
-def get_fact_lineage(db: Session, company_id: int, metric_name: str, fiscal_year: int) -> Dict[str, Any]:
+def get_fact_lineage(db: Session, company_id: int, metric_name: str, fiscal_year: Optional[int] = None) -> Dict[str, Any]:
     return get_fact_lineage_impl(db, company_id, metric_name, fiscal_year)
 
 def create_metric_tools(db: Session) -> List[BaseTool]:
@@ -245,7 +259,7 @@ def create_metric_tools(db: Session) -> List[BaseTool]:
 
     @tool
     @traceable(name="get_fact_lineage", run_type="tool")
-    def get_fact_lineage_tool(company_id: int, metric_name: str, fiscal_year: int) -> Dict[str, Any]:
+    def get_fact_lineage_tool(company_id: int, metric_name: str, fiscal_year: Optional[int] = None) -> Dict[str, Any]:
         """Resolves the exact constituent facts, formulas, and bounding-box citations for a derived KPI."""
         return get_fact_lineage_impl(db, company_id, metric_name, fiscal_year)
 
