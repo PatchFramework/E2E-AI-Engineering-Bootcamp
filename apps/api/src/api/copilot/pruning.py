@@ -1,9 +1,11 @@
 from typing import List
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langsmith import traceable
 
 MAX_CONVERSATION_TURNS = 10
 TOOL_RETENTION_TURNS = 3
 
+@traceable(name="prune_messages_state")
 def prune_messages_state(messages: List[BaseMessage]) -> List[BaseMessage]:
     """
     Prunes intermediate ToolMessages older than `TOOL_RETENTION_TURNS` to prevent

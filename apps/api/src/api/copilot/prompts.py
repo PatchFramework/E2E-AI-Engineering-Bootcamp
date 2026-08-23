@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from typing import Dict, Any, Optional
+from langsmith import traceable
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ Rules:
 _PROMPT_CACHE: Dict[str, Dict[str, Any]] = {}
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
+@traceable(name="get_prompt_template")
 def get_prompt_template(prompt_name: str, fallback_content: str) -> str:
     """
     Attempts to pull a versioned prompt from LangSmith Prompt Hub.

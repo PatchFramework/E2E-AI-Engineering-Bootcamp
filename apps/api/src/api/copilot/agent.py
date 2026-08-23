@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import AsyncGenerator, Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage, AIMessage
+from langsmith import traceable
 
 from api.models.db_models import ChatSession, ChatMessage
 from api.copilot.graph import build_copilot_graph
@@ -19,6 +20,33 @@ class UnderwritingCopilotService:
     def __init__(self, db: Session):
         self.db = db
         self.graph = build_copilot_graph(db)
+
+    @traceable(name="_fetch_or_create_chat_session_in_db")
+    def _fetch_or_create_chat_session_in_db(self, session_id, company_id, user_message):
+        chat_session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+        if not chat_session:
+            chat_session = ChatSession(
+                id=session_id,
+                company_id=company_id,
+                title=user_message[:32] + ("..." if len(user_message) > 32 else ""),
+                created_at=datetime.utcnow()
+            )
+            self.db.add(chat_session)
+            self.db.commit()
+
+    @traceable(name="_persist_user_message")
+    def _persist_user_message(self, session_id, user_message, context_snapshot):
+        user_db_msg = ChatMessage(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            role="user",
+            content=user_message,
+            context_snapshot=context_snapshot,
+            created_at=datetime.utcnow()
+        )
+        self.db.add(user_db_msg)
+        self.db.commit()
+
 
     async def stream_chat(
         self,
@@ -36,28 +64,11 @@ class UnderwritingCopilotService:
         active_metric = context_snapshot.get("activeMetric")
 
         # 1. Fetch or create ChatSession in DB
-        chat_session = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
-        if not chat_session:
-            chat_session = ChatSession(
-                id=session_id,
-                company_id=company_id,
-                title=user_message[:32] + ("..." if len(user_message) > 32 else ""),
-                created_at=datetime.utcnow()
-            )
-            self.db.add(chat_session)
-            self.db.commit()
+        self._fetch_or_create_chat_session_in_db(session_id, company_id, user_message)
+        
 
         # 2. Persist User Message
-        user_db_msg = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            role="user",
-            content=user_message,
-            context_snapshot=context_snapshot,
-            created_at=datetime.utcnow()
-        )
-        self.db.add(user_db_msg)
-        self.db.commit()
+        self._persist_user_message(session_id, user_message, context_snapshot)
 
         # 3. Load historical messages from DB
         db_messages = self.db.query(ChatMessage).filter(
