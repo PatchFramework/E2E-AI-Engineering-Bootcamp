@@ -71,7 +71,7 @@ describe('CopilotPanel Component', () => {
       id: 'msg-2',
       role: 'assistant',
       runId: 'run-trace-123',
-      content: 'Total debt increased to €1.2B while EBITDA remained steady at €178M.',
+      content: 'Total debt increased to €1.2B according to [Annual_Report_2025.pdf · p. 42] while EBITDA remained steady at €178M.',
       citations: [
         {
           documentId: 1,
@@ -143,7 +143,7 @@ describe('CopilotPanel Component', () => {
     expect(screen.getByText(/Total debt increased to €1.2B/)).toBeInTheDocument();
   });
 
-  it('renders dynamic Recharts widget and handles citation click', () => {
+  it('renders dynamic Recharts widget and handles citation click (both inline and tray)', () => {
     const handleOpenCitation = vi.fn();
 
     render(
@@ -170,11 +170,15 @@ describe('CopilotPanel Component', () => {
     expect(screen.getByText('5-Year Leverage vs EBITDA Margin')).toBeInTheDocument();
     expect(screen.getByTestId('line-chart')).toBeInTheDocument();
 
-    // Verify citation is rendered and clickable
-    const citation = screen.getByText(/Annual_Report_2025\.pdf/i);
-    expect(citation).toBeInTheDocument();
+    // Verify citation is rendered and clickable in bottom tray
+    const citationTrayItems = screen.getAllByText(/Annual_Report_2025\.pdf/i);
+    expect(citationTrayItems.length).toBeGreaterThanOrEqual(1);
 
-    fireEvent.click(citation);
+    // Click the inline citation button inside the prose text
+    const inlineCitationBtn = screen.getByRole('button', { name: /Annual_Report_2025\.pdf · p\. 42/i });
+    expect(inlineCitationBtn).toBeInTheDocument();
+
+    fireEvent.click(inlineCitationBtn);
     expect(handleOpenCitation).toHaveBeenCalledTimes(1);
     expect(handleOpenCitation).toHaveBeenCalledWith(
       expect.objectContaining({

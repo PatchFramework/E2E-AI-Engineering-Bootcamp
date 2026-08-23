@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MarkdownRenderer } from '../copilot/MarkdownRenderer';
+import { CopilotCitation } from '../../../models/copilot';
 
 // Mock Recharts components
 vi.mock('recharts', () => ({
@@ -178,5 +179,141 @@ def calculate_leverage(debt, cash, ebitda):
     expect(screen.getByText('python')).toBeInTheDocument();
     expect(screen.getByText(/def calculate_leverage/)).toBeInTheDocument();
     expect(screen.getByTitle('Copy Code')).toBeInTheDocument();
+  });
+
+  it('renders inline bracketed citations matching citation list as clickable elements and fires onOpenCitation', () => {
+    const handleOpenCitation = vi.fn();
+    const sampleCitations: CopilotCitation[] = [
+      {
+        documentId: 1,
+        filename: 'FY2025_Annual_Report.pdf',
+        pageNumber: 42,
+        displayedPage: 'p. 42',
+        section: 'Financial Highlights',
+        snippet: 'Operating EBITDA was €178M.',
+        boundingBox: [10, 20, 100, 50],
+      },
+      {
+        documentId: 1,
+        filename: 'FY2025_Annual_Report.pdf',
+        pageNumber: 87,
+        displayedPage: 'p. 87',
+        section: 'Debt Schedule',
+      },
+    ];
+
+    const markdown = `
+According to [FY2025_Annual_Report.pdf · p. 42], EBITDA was €178M.
+Also refer to [FY2025_Annual_Report.pdf · p. 87] for debt breakdown.
+`;
+
+    render(
+      <MarkdownRenderer
+        content={markdown}
+        citations={sampleCitations}
+        onOpenCitation={handleOpenCitation}
+      />
+    );
+
+    const citationButtons = screen.getAllByRole('button');
+    const firstCitBtn = citationButtons.find(b => b.textContent?.includes('FY2025_Annual_Report.pdf · p. 42'));
+    expect(firstCitBtn).toBeDefined();
+
+    fireEvent.click(firstCitBtn!);
+    expect(handleOpenCitation).toHaveBeenCalledTimes(1);
+    expect(handleOpenCitation).toHaveBeenCalledWith(sampleCitations[0]);
+  });
+
+  it('renders explicit markdown citation links (citation:N) as clickable buttons', () => {
+    const handleOpenCitation = vi.fn();
+    const sampleCitations: CopilotCitation[] = [
+      {
+        documentId: 2,
+        filename: 'FY2024_10K.pdf',
+        pageNumber: 15,
+        displayedPage: 'p. 15',
+      },
+    ];
+
+    const markdown = `As stated in [Annual Filing 2024](citation:0), revenues grew 12%.`;
+
+    render(
+      <MarkdownRenderer
+        content={markdown}
+        citations={sampleCitations}
+        onOpenCitation={handleOpenCitation}
+      />
+    );
+
+    const btn = screen.getByRole('button', { name: /Annual Filing 2024/i });
+    expect(btn).toBeInTheDocument();
+
+    fireEvent.click(btn);
+    expect(handleOpenCitation).toHaveBeenCalledWith(sampleCitations[0]);
+  });
+
+  it('does NOT convert non-citation bracketed content to citation buttons and preserves plain text/links', () => {
+    const handleOpenCitation = vi.fn();
+    const sampleCitations: CopilotCitation[] = [
+      {
+        documentId: 1,
+        filename: 'FY2025_Annual_Report.pdf',
+        pageNumber: 42,
+        displayedPage: 'p. 42',
+      },
+    ];
+
+    const markdown = `
+- [Orchestrator Plan]: Execute workflow
+- [Note]: Check debt covenants [x]
+- [1] First observation
+- Formula: [a + b] / c
+- Regular link: [External Website](https://example.com)
+`;
+
+    const { container } = render(
+      <MarkdownRenderer
+        content={markdown}
+        citations={sampleCitations}
+        onOpenCitation={handleOpenCitation}
+      />
+    );
+
+    // Non-citation brackets should not create citation buttons
+    const buttons = screen.queryAllByRole('button');
+    expect(buttons.length).toBe(0);
+
+    // Text should be preserved
+    expect(screen.getByText(/\[Orchestrator Plan\]: Execute workflow/i)).toBeInTheDocument();
+    expect(screen.getByText(/\[Note\]: Check debt covenants/i)).toBeInTheDocument();
+    expect(screen.getByText(/Formula: \[a \+ b\] \/ c/i)).toBeInTheDocument();
+
+    // Regular markdown link should render as anchor tag
+    const link = screen.getByRole('link', { name: /External Website/i });
+    expect(link).toHaveAttribute('href', 'https://example.com');
+  });
+
+  it('renders citation button and opens PDF preview even if citations array is empty', () => {
+    const handleOpenCitation = vi.fn();
+    const markdown = `Refer to [FY2025_Annual_Report.pdf · p. 42] for details.`;
+
+    render(
+      <MarkdownRenderer
+        content={markdown}
+        onOpenCitation={handleOpenCitation}
+      />
+    );
+
+    const btn = screen.getByRole('button', { name: /FY2025_Annual_Report\.pdf · p\. 42/i });
+    expect(btn).toBeInTheDocument();
+
+    fireEvent.click(btn);
+    expect(handleOpenCitation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filename: 'FY2025_Annual_Report.pdf',
+        pageNumber: 42,
+        displayedPage: 'p. 42',
+      })
+    );
   });
 });

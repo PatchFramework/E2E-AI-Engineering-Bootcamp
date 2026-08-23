@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import { Copy, Check, Code as CodeIcon } from 'lucide-react';
+import { Copy, Check, Code as CodeIcon, FileText } from 'lucide-react';
 import { MermaidRenderer } from './MermaidRenderer';
 import { ChartWidgetRenderer } from './ChartWidgetRenderer';
-import { CopilotWidget } from '../../../models/copilot';
+import { CopilotWidget, CopilotCitation } from '../../../models/copilot';
 
 interface MarkdownRendererProps {
   content: string;
   className?: string;
+  citations?: CopilotCitation[];
+  onOpenCitation?: (citation: CopilotCitation) => void;
 }
 
 interface CodeBlockProps {
@@ -92,7 +94,167 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, value }) => {
   );
 };
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
+function isCitationPattern(text: string): boolean {
+  const clean = text.trim().toLowerCase();
+  const hasPage = /p\.\s*\d+|page\s*\d+|displayedpage/i.test(clean);
+  const hasDoc = /[\w.-]+\.pdf|annual\s*report|10-k|10-q|filing|notes?\s*\d+/i.test(clean);
+  return (hasPage && hasDoc) || /[\w.-]+\.pdf\s*·\s*p\.\s*\d+/i.test(clean);
+}
+
+function findMatchingCitation(
+  rawText: string,
+  citations: CopilotCitation[] | undefined
+): { index: number; citation: CopilotCitation } | null {
+  const clean = rawText.trim().toLowerCase();
+
+  if (citations && citations.length > 0) {
+    // 1. First pass: filename + page match
+    for (let idx = 0; idx < citations.length; idx++) {
+      const c = citations[idx];
+      const cFilename = (c.filename || '').toLowerCase();
+      const cFilenameBase = cFilename.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ');
+      const cleanNoUnderscore = clean.replace(/[_-]/g, ' ');
+      const cPageNum = String(c.pageNumber || '');
+      const cDispPage = (c.displayedPage || '').toLowerCase();
+
+      const hasFilename = clean.includes(cFilename) || (cFilenameBase.length > 3 && cleanNoUnderscore.includes(cFilenameBase));
+      const hasPage = (cPageNum && (clean.includes(`p. ${cPageNum}`) || clean.includes(`p.${cPageNum}`) || clean.includes(`page ${cPageNum}`))) ||
+                      (cDispPage && clean.includes(cDispPage));
+
+      if (hasFilename && hasPage) {
+        return { index: idx, citation: c };
+      }
+    }
+
+    // 2. Second pass: filename alone is clearly referenced
+    for (let idx = 0; idx < citations.length; idx++) {
+      const c = citations[idx];
+      const cFilename = (c.filename || '').toLowerCase();
+      const cFilenameBase = cFilename.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ');
+      const cleanNoUnderscore = clean.replace(/[_-]/g, ' ');
+      if (cFilename && (clean.includes(cFilename) || (cFilenameBase.length > 5 && cleanNoUnderscore.includes(cFilenameBase)))) {
+        return { index: idx, citation: c };
+      }
+    }
+
+    // 3. Third pass: exact page reference matching citation displayed page (e.g. "p. 42")
+    for (let idx = 0; idx < citations.length; idx++) {
+      const c = citations[idx];
+      const cPageNum = String(c.pageNumber || '');
+      const cDispPage = (c.displayedPage || '').toLowerCase();
+      if (
+        (cPageNum && (clean === `p. ${cPageNum}` || clean === `p.${cPageNum}` || clean === `page ${cPageNum}`)) ||
+        (cDispPage && clean === cDispPage)
+      ) {
+        return { index: idx, citation: c };
+      }
+    }
+  }
+
+  // Fallback: If text itself is a citation pattern, synthesize citation
+  if (isCitationPattern(rawText)) {
+    const pageMatch = rawText.match(/(?:p\.|page|displayedpage)[\s:]*(\d+)/i);
+    const pdfMatch = rawText.match(/([\w.-]+\.pdf)/i);
+    const pageNum = pageMatch ? parseInt(pageMatch[1], 10) : 1;
+    const filename = pdfMatch ? pdfMatch[1] : (citations?.[0]?.filename || 'FY2025_Annual_Report.pdf');
+    const docId = citations?.[0]?.documentId || 1;
+
+    return {
+      index: 0,
+      citation: {
+        documentId: docId,
+        filename,
+        pageNumber: pageNum,
+        displayedPage: `p. ${pageNum}`,
+      },
+    };
+  }
+
+  return null;
+}
+
+export function extractCitationFromLink(
+  text: string,
+  href?: string,
+  citations?: CopilotCitation[]
+): CopilotCitation | null {
+  const combined = `${text} ${href || ''}`.trim();
+  const clean = combined.toLowerCase();
+
+  // 1. If href is citation:INDEX
+  if (href && href.startsWith('citation:')) {
+    const idxStr = href.replace('citation:', '');
+    const idx = parseInt(idxStr, 10);
+    if (citations && !isNaN(idx) && citations[idx]) {
+      return citations[idx];
+    }
+  }
+
+  // 2. Match against active citations array
+  if (citations && citations.length > 0) {
+    const matched = findMatchingCitation(combined, citations);
+    if (matched) {
+      return matched.citation;
+    }
+  }
+
+  // 3. Fallback: Parse filename and pageNumber from text/href
+  const pageMatch = combined.match(/(?:p\.|page|displayedpage)[\s:]*(\d+)/i);
+  const pdfMatch = combined.match(/([\w.-]+\.pdf)/i);
+  const isCitationLike =
+    href?.startsWith('citation:') ||
+    pdfMatch !== null ||
+    isCitationPattern(combined);
+
+  if (isCitationLike) {
+    const pageNum = pageMatch ? parseInt(pageMatch[1], 10) : (citations?.[0]?.pageNumber || 1);
+    const filename = pdfMatch ? pdfMatch[1] : (citations?.[0]?.filename || 'FY2025_Annual_Report.pdf');
+    const docId = citations?.[0]?.documentId || 1;
+
+    return {
+      documentId: docId,
+      filename: filename,
+      pageNumber: pageNum,
+      displayedPage: `p. ${pageNum}`,
+      section: undefined,
+    };
+  }
+
+  return null;
+}
+
+function processCitationLinks(content: string, citations?: CopilotCitation[]): string {
+  if (!content) return content;
+
+  // Split content by code fences to avoid replacing inside code blocks
+  const parts = content.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+
+  return parts.map((part) => {
+    if (part.startsWith('`')) {
+      return part;
+    }
+
+    // Match [bracketed text] that is NOT followed by (
+    return part.replace(/\[([^\]\n]+)\](?!\()/g, (match, innerText) => {
+      const matched = findMatchingCitation(innerText, citations);
+      if (matched) {
+        return `[${innerText}](citation:${matched.index})`;
+      }
+      return match;
+    });
+  }).join('');
+}
+
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+  content,
+  className = '',
+  citations,
+  onOpenCitation,
+}) => {
+  const processedContent = useMemo(() => {
+    return processCitationLinks(content, citations);
+  }, [content, citations]);
+
   return (
     <div className={`prose-markdown ${className}`}>
       <ReactMarkdown
@@ -236,18 +398,55 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
             </td>
           ),
 
-          // Links
-          a: ({ href, children, ...props }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-brand-400 hover:text-brand-300 underline underline-offset-2 transition"
-              {...props}
-            >
-              {children}
-            </a>
-          ),
+          // Links & Interactive Citations
+          a: ({ href, children, ...props }) => {
+            const linkText = typeof children === 'string'
+              ? children
+              : Array.isArray(children)
+              ? children.map(c => (typeof c === 'string' ? c : '')).join('')
+              : '';
+
+            const citation = extractCitationFromLink(linkText, href, citations);
+
+            if (citation && onOpenCitation) {
+              return (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onOpenCitation(citation);
+                  }}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md bg-brand-950/80 hover:bg-brand-900 border border-brand-800/80 hover:border-brand-600 text-brand-300 hover:text-brand-100 transition-all font-semibold text-[10px] cursor-pointer align-baseline group shadow-sm"
+                  title={`View ${citation.filename} (${citation.displayedPage}) in PDF preview`}
+                >
+                  <FileText className="w-3 h-3 text-brand-400 group-hover:scale-110 transition-transform flex-shrink-0" />
+                  <span className="underline underline-offset-2">{children}</span>
+                </button>
+              );
+            }
+
+            if (href?.startsWith('citation:')) {
+              return (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 rounded-md bg-brand-950/80 border border-brand-800/80 text-brand-300 font-semibold text-[10px]">
+                  <FileText className="w-3 h-3 text-brand-400 flex-shrink-0" />
+                  <span>{children}</span>
+                </span>
+              );
+            }
+
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand-400 hover:text-brand-300 underline underline-offset-2 transition"
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          },
 
           // Horizontal rule
           hr: ({ ...props }) => <hr className="border-slate-800 my-2.5" {...props} />,
@@ -269,8 +468,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
           },
         }}
       >
-        {content}
+        {processedContent}
       </ReactMarkdown>
     </div>
   );
 };
+
