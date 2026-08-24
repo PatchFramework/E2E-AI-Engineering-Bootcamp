@@ -5,23 +5,38 @@ import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 
+from api.core.database import SessionLocal
 from api.copilot.state import CopilotGraphState, SubagentSubstate, ToolCallRecord
 from api.copilot.tools.retrieval_tools import (
     create_retrieval_tools, search_filing_chunks_hybrid_impl, count_concept_frequency_impl
 )
 from api.copilot.schemas.citation_schemas import CitationSource
 from api.copilot.prompts import get_prompt_template, FALLBACK_RAG_PROMPT
-from api.copilot.token_tracker import extract_token_usage, merge_token_usages
+from api.copilot.llm_client import get_chat_openai, get_default_model_name, empty_token_usage, extract_token_usage, merge_token_usages
 
 logger = logging.getLogger(__name__)
 
-def run_rag_agent(state: CopilotGraphState, db: Session) -> Dict[str, Any]:
+def run_rag_agent(state: CopilotGraphState, config: Optional[RunnableConfig] = None, db: Optional[Session] = None) -> Dict[str, Any]:
     """
     LLM-powered Filing Research & Document RAG Subagent:
     Executes hybrid retrieval over filing chunks with forced initial tool execution.
     Features self-correcting query broadening if few or zero chunks are retrieved.
     """
+    resolved_db = db or (config.get("configurable", {}).get("db") if config else None)
+    should_close_db = False
+    if resolved_db is None:
+        resolved_db = SessionLocal()
+        should_close_db = True
+
+    try:
+        return _run_rag_agent_impl(state, resolved_db)
+    finally:
+        if should_close_db and resolved_db:
+            resolved_db.close()
+
+def _run_rag_agent_impl(state: CopilotGraphState, db: Session) -> Dict[str, Any]:
     company_id = state["company_id"]
     messages = state.get("messages", [])
     last_user_msg = messages[-1].content if messages else ""
@@ -39,14 +54,10 @@ def run_rag_agent(state: CopilotGraphState, db: Session) -> Dict[str, Any]:
     task_desc = substate.get("task_description", last_user_msg)
     tool_history: List[ToolCallRecord] = list(substate.get("tool_call_history") or [])
 
-    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+    model_name = get_default_model_name()
     openai_key = os.getenv("OPENAI_API_KEY")
-    current_token_usage = state.get("token_usage") or {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
-    accumulated_subagent_tokens = {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
+    current_token_usage = state.get("token_usage") or empty_token_usage()
+    accumulated_subagent_tokens = empty_token_usage()
 
     rag_chunks = dict(state.get("rag_chunks") or {})
     new_citations: List[CitationSource] = []
@@ -57,19 +68,11 @@ def run_rag_agent(state: CopilotGraphState, db: Session) -> Dict[str, Any]:
 
     if openai_key:
         try:
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(
-                model=model_name,
+            llm = get_chat_openai(
+                model_name=model_name,
                 temperature=0.1,
-                api_key=openai_key,
                 tags=["rag-agent", model_name],
-                model_kwargs={
-                    "metadata": {
-                        "ls_model_name": model_name,
-                        "ls_provider": "openai",
-                        "company_id": company_id
-                    }
-                }
+                company_id=company_id
             )
 
             prompt_content = get_prompt_template("copilot-rag", FALLBACK_RAG_PROMPT)
