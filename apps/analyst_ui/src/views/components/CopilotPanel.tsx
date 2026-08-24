@@ -40,6 +40,7 @@ interface CopilotPanelProps {
   messages: CopilotMessage[];
   isStreaming: boolean;
   currentReasoningStatus: string | null;
+  reasoningSteps?: string[];
   turnCount?: number;
   maxTurns?: number;
   isTurnLimitReached?: boolean;
@@ -75,6 +76,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   messages,
   isStreaming,
   currentReasoningStatus,
+  reasoningSteps: reasoningStepsProp,
   turnCount: turnCountProp,
   maxTurns = 10,
   isTurnLimitReached: isTurnLimitReachedProp,
@@ -93,6 +95,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   const [activeFeedbackMsgId, setActiveFeedbackMsgId] = useState<string | null>(null);
   const [feedbackComment, setFeedbackComment] = useState('');
   const [submittedFeedbackMsgIds, setSubmittedFeedbackMsgIds] = useState<Record<string, boolean>>({});
+  const [expandedStepsMsgIds, setExpandedStepsMsgIds] = useState<Record<string, boolean>>({});
+  const [isLiveStepsExpanded, setIsLiveStepsExpanded] = useState(false);
 
   const isDraggingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -510,6 +514,40 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
               return (
                 <>
+                  {/* Collapsible Workflow / Reasoning Steps History */}
+                  {m.role === 'assistant' && m.reasoningSteps && m.reasoningSteps.length > 0 && (
+                    <div className="mb-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedStepsMsgIds(prev => ({
+                            ...prev,
+                            [m.id]: !prev[m.id],
+                          }))
+                        }
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-900/90 hover:bg-slate-850 border border-slate-800 text-[10px] text-slate-400 hover:text-slate-200 transition font-medium cursor-pointer"
+                      >
+                        <Layers className="w-3 h-3 text-brand-400 flex-shrink-0" />
+                        <span>Workflow steps ({m.reasoningSteps.length})</span>
+                        <ChevronDown
+                          className={`w-3 h-3 text-slate-500 transition-transform ${
+                            expandedStepsMsgIds[m.id] ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </button>
+                      {expandedStepsMsgIds[m.id] && (
+                        <div className="mt-1.5 p-2 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1 text-[10px] text-slate-300">
+                          {m.reasoningSteps.map((step, sIdx) => (
+                            <div key={sIdx} className="flex items-start gap-1.5 text-slate-400">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0 mt-0.5" />
+                              <span className="leading-snug">{step}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <MarkdownRenderer
                     content={m.content}
                     citations={effectiveCitations}
@@ -655,13 +693,52 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
           </div>
         ))}
 
-        {/* Live Reasoning Status Badge */}
-        {isStreaming && currentReasoningStatus && (
-          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-brand-950/60 border border-brand-800/80 text-brand-300 text-xs animate-pulse">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400 flex-shrink-0" />
-            <span className="font-medium text-[11px] truncate">{currentReasoningStatus}</span>
-          </div>
-        )}
+        {/* Live Reasoning Status Badge & Collapsible History */}
+        {isStreaming && currentReasoningStatus && (() => {
+          const lastAsst = [...messages].reverse().find(m => m.role === 'assistant');
+          const liveSteps = reasoningStepsProp || lastAsst?.reasoningSteps || (currentReasoningStatus ? [currentReasoningStatus] : []);
+
+          return (
+            <div className="rounded-xl bg-brand-950/70 border border-brand-800/80 text-brand-300 text-xs overflow-hidden transition shadow-sm">
+              <div className="flex items-center justify-between p-2.5 gap-2">
+                <div className="flex items-center gap-2 min-w-0 flex-1" title={currentReasoningStatus}>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400 flex-shrink-0" />
+                  <span className="font-medium text-[11px] truncate">{currentReasoningStatus}</span>
+                </div>
+                {liveSteps.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsLiveStepsExpanded(prev => !prev)}
+                    className="px-1.5 py-0.5 rounded bg-brand-900/60 hover:bg-brand-900 border border-brand-700/60 text-[9px] text-brand-300 font-semibold flex items-center gap-1 transition flex-shrink-0 cursor-pointer"
+                    title="View all execution steps"
+                  >
+                    <span>Steps ({liveSteps.length})</span>
+                    <ChevronDown className={`w-2.5 h-2.5 transition-transform ${isLiveStepsExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+                )}
+              </div>
+              {isLiveStepsExpanded && liveSteps.length > 0 && (
+                <div className="px-3 pb-2.5 pt-1.5 border-t border-brand-900/60 space-y-1 text-[10px] bg-brand-950/90">
+                  {liveSteps.map((step, sIdx) => {
+                    const isLatest = sIdx === liveSteps.length - 1;
+                    return (
+                      <div key={sIdx} className="flex items-start gap-1.5">
+                        {isLatest ? (
+                          <Loader2 className="w-3 h-3 text-brand-400 animate-spin flex-shrink-0 mt-0.5" />
+                        ) : (
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400 flex-shrink-0 mt-0.5" />
+                        )}
+                        <span className={`leading-snug ${isLatest ? 'text-brand-200 font-medium' : 'text-slate-400'}`}>
+                          {step}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Suggested Prompts */}
         {!isStreaming && !isTurnLimitReached && messages.length <= 3 && (

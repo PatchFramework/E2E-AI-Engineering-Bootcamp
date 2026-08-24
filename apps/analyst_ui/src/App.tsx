@@ -189,6 +189,7 @@ export default function App() {
           messages={copilotController.messages}
           isStreaming={copilotController.isStreaming}
           currentReasoningStatus={copilotController.currentReasoningStatus}
+          reasoningSteps={copilotController.reasoningSteps}
           turnCount={copilotController.turnCount}
           maxTurns={copilotController.maxTurns}
           isTurnLimitReached={copilotController.isTurnLimitReached}

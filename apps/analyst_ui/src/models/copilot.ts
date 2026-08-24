@@ -58,6 +58,7 @@ export interface CopilotMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   status?: string; // Live reasoning state during stream
+  reasoningSteps?: string[]; // Chronological sequence of workflow reasoning statuses
   toolCalls?: { tool: string; args: Record<string, any> }[];
   citations?: CopilotCitation[];
   widgets?: CopilotWidget[];

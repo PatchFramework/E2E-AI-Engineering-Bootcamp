@@ -258,6 +258,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   return (
     <div className={`prose-markdown ${className}`}>
       <ReactMarkdown
+        urlTransform={(url) => url}
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw]}
         components={{

@@ -61,6 +61,7 @@ export function useCopilotController(
 
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [currentReasoningStatus, setCurrentReasoningStatus] = useState<string | null>(null);
+  const [reasoningHistory, setReasoningHistory] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Sync width to localStorage
@@ -78,45 +79,34 @@ export function useCopilotController(
   }, [messagesBySession]);
 
   // Fetch backend chat sessions on mount or when companyId changes
-  useEffect(() => {
-    let isCancelled = false;
-    async function loadBackendSessions() {
-      try {
-        const queryParam = contextSnapshot.companyId ? `?company_id=${contextSnapshot.companyId}` : '';
-        const backendSessions = await apiClient.get<any[]>(`/api/copilot/sessions${queryParam}`);
-        if (!isCancelled && Array.isArray(backendSessions) && backendSessions.length > 0) {
-          const mapped: ChatSessionSummary[] = backendSessions.map(s => ({
-            id: s.id,
-            title: s.title || 'Conversation',
-            companyId: s.company_id ?? null,
-            createdAt: s.created_at || new Date().toISOString(),
-            updatedAt: s.updated_at || new Date().toISOString(),
-          }));
-          setSessions(prev => {
-            const combined = [...mapped];
-            for (const p of prev) {
-              if (!combined.some(c => c.id === p.id)) {
-                combined.push(p);
-              }
-            }
-            return combined;
-          });
-        }
-      } catch {
-        // Backend offline or running in mock dev mode
+  const refreshSessions = useCallback(async () => {
+    try {
+      const queryParam = contextSnapshot.companyId ? `?company_id=${contextSnapshot.companyId}` : '';
+      const backendSessions = await apiClient.get<any[]>(`/api/copilot/sessions${queryParam}`);
+      if (Array.isArray(backendSessions) && backendSessions.length > 0) {
+        const mapped: ChatSessionSummary[] = backendSessions.map(s => ({
+          id: s.id,
+          title: s.title || 'Conversation',
+          companyId: s.company_id ?? null,
+          createdAt: s.created_at || new Date().toISOString(),
+          updatedAt: s.updated_at || new Date().toISOString(),
+        }));
+        setSessions(mapped);
       }
+    } catch {
+      // Backend offline or running in mock dev mode
     }
-    loadBackendSessions();
-    return () => {
-      isCancelled = true;
-    };
   }, [contextSnapshot.companyId]);
+
+  useEffect(() => {
+    refreshSessions();
+  }, [refreshSessions]);
 
   // Fetch backend messages when switching to an active session
   useEffect(() => {
     let isCancelled = false;
     async function loadSessionMessages() {
-      if (!activeSessionId || activeSessionId.startsWith('session-default') || activeSessionId.startsWith('session-')) {
+      if (!activeSessionId) {
         return;
       }
       try {
@@ -243,7 +233,8 @@ export function useCopilotController(
         },
       ],
     }));
-  }, [contextSnapshot.companyId, contextSnapshot.companyName, isStreaming, sessions.length]);
+    refreshSessions();
+  }, [contextSnapshot.companyId, contextSnapshot.companyName, isStreaming, refreshSessions, sessions.length]);
 
   // Switch to an existing session
   const switchSession = useCallback((sessionId: string) => {
@@ -323,13 +314,17 @@ export function useCopilotController(
       );
 
       setIsStreaming(true);
-      setCurrentReasoningStatus('Analyzing question & underwriting context...');
+      const initialStatus = 'Analyzing question & underwriting context...';
+      setCurrentReasoningStatus(initialStatus);
+      setReasoningHistory([initialStatus]);
+      const activeReasoningSteps: string[] = [initialStatus];
 
       const assistantMsgId = `asst-${Date.now()}`;
       const placeholderAssistantMsg: CopilotMessage = {
         id: assistantMsgId,
         role: 'assistant',
         content: '',
+        reasoningSteps: [initialStatus],
         createdAt: new Date().toISOString(),
       };
 
@@ -410,7 +405,18 @@ export function useCopilotController(
               // 2. Status / Reasoning Chip Updates
               else if (eventType === 'status' && parsedData) {
                 const statusMsg = typeof parsedData === 'string' ? parsedData : parsedData.message || parsedData.step || 'Processing...';
+                if (statusMsg && !activeReasoningSteps.includes(statusMsg)) {
+                  activeReasoningSteps.push(statusMsg);
+                  setReasoningHistory([...activeReasoningSteps]);
+                }
                 setCurrentReasoningStatus(statusMsg);
+                setMessagesForCurrentSession(prev =>
+                  prev.map(m =>
+                    m.id === assistantMsgId
+                      ? { ...m, status: statusMsg, reasoningSteps: [...activeReasoningSteps] }
+                      : m
+                  )
+                );
               }
 
               // 3. Widget Generative UI Event
@@ -440,7 +446,7 @@ export function useCopilotController(
                   setMessagesForCurrentSession(prev =>
                     prev.map(m =>
                       m.id === assistantMsgId || m.id === parsedData.message_id
-                        ? { ...m, id: parsedData.message_id, runId: activeRunId || m.runId || parsedData.message_id }
+                        ? { ...m, id: parsedData.message_id, runId: activeRunId || m.runId || parsedData.message_id, reasoningSteps: [...activeReasoningSteps] }
                         : m
                     )
                   );
@@ -454,7 +460,7 @@ export function useCopilotController(
                 setMessagesForCurrentSession(prev =>
                   prev.map(m =>
                     m.id === assistantMsgId || (activeRunId && m.runId === activeRunId)
-                      ? { ...m, content: accumulatedContent }
+                      ? { ...m, content: accumulatedContent, reasoningSteps: [...activeReasoningSteps] }
                       : m
                   )
                 );
@@ -478,7 +484,12 @@ export function useCopilotController(
                     }
                   }
                   if (parsedData.status) {
-                    setCurrentReasoningStatus(parsedData.status);
+                    const statusMsg = parsedData.status;
+                    if (!activeReasoningSteps.includes(statusMsg)) {
+                      activeReasoningSteps.push(statusMsg);
+                      setReasoningHistory([...activeReasoningSteps]);
+                    }
+                    setCurrentReasoningStatus(statusMsg);
                   }
                 } else if (typeof parsedData === 'string' && parsedData !== '[DONE]') {
                   accumulatedContent += parsedData;
@@ -493,6 +504,7 @@ export function useCopilotController(
                           runId: activeRunId || m.runId,
                           citations: citations.length > 0 ? citations : m.citations,
                           widgets: widgets.length > 0 ? widgets : m.widgets,
+                          reasoningSteps: [...activeReasoningSteps],
                         }
                       : m
                   )
@@ -508,6 +520,7 @@ export function useCopilotController(
             assistantMsgId,
             setMessagesForCurrentSession,
             setCurrentReasoningStatus,
+            setReasoningHistory,
             controller.signal
           );
         }
@@ -520,6 +533,7 @@ export function useCopilotController(
             assistantMsgId,
             setMessagesForCurrentSession,
             setCurrentReasoningStatus,
+            setReasoningHistory,
             controller.signal
           );
         }
@@ -527,9 +541,10 @@ export function useCopilotController(
         setIsStreaming(false);
         setCurrentReasoningStatus(null);
         abortControllerRef.current = null;
+        refreshSessions();
       }
     },
-    [activeSessionId, contextSnapshot, isStreaming, isTurnLimitReached, setMessagesForCurrentSession]
+    [activeSessionId, contextSnapshot, isStreaming, isTurnLimitReached, refreshSessions, setMessagesForCurrentSession]
   );
 
   return {
@@ -543,6 +558,8 @@ export function useCopilotController(
     messages: currentMessages,
     isStreaming,
     currentReasoningStatus,
+    reasoningHistory,
+    reasoningSteps: reasoningHistory,
     turnCount,
     maxTurns: MAX_CONVERSATION_TURNS,
     isTurnLimitReached,
@@ -562,14 +579,27 @@ async function simulateCopilotResponse(
   msgId: string,
   setMessages: (updater: (prev: CopilotMessage[]) => CopilotMessage[]) => void,
   setStatus: (status: string | null) => void,
+  setReasoningHistory: React.Dispatch<React.SetStateAction<string[]>>,
   signal: AbortSignal
 ) {
   const q = query.toLowerCase();
   const companyName = context.companyName || 'Acme Corp';
+  const simulatedSteps: string[] = ['Analyzing question & underwriting context...'];
+
+  const emitSimulatedStatus = (statusMsg: string) => {
+    if (!simulatedSteps.includes(statusMsg)) {
+      simulatedSteps.push(statusMsg);
+      setReasoningHistory([...simulatedSteps]);
+    }
+    setStatus(statusMsg);
+    setMessages(prev =>
+      prev.map(m => (m.id === msgId ? { ...m, reasoningSteps: [...simulatedSteps] } : m))
+    );
+  };
 
   // Step 1: Status update
   if (signal.aborted) return;
-  setStatus('Searching filing evidence & database metrics...');
+  emitSimulatedStatus('Searching filing evidence & database metrics...');
   await new Promise(r => setTimeout(r, 600));
 
   if (signal.aborted) return;
@@ -579,7 +609,7 @@ async function simulateCopilotResponse(
   let widgets: CopilotWidget[] = [];
 
   if (q.includes('chart') || q.includes('trend') || q.includes('leverage') || q.includes('margin')) {
-    setStatus('Running deterministic historical ratio calculations & generating Recharts widget...');
+    emitSimulatedStatus('Running deterministic historical ratio calculations & generating Recharts widget...');
     await new Promise(r => setTimeout(r, 600));
     if (signal.aborted) return;
 
@@ -626,7 +656,7 @@ async function simulateCopilotResponse(
       },
     ];
   } else if (q.includes('topic') || q.includes('word') || q.includes('mention') || q.includes('cloud')) {
-    setStatus('Counting canonical accounting concept frequencies across reports...');
+    emitSimulatedStatus('Counting canonical accounting concept frequencies across reports...');
     await new Promise(r => setTimeout(r, 600));
     if (signal.aborted) return;
 
@@ -659,7 +689,7 @@ async function simulateCopilotResponse(
       },
     ];
   } else if (q.includes('pie') || q.includes('breakdown') || q.includes('capital') || q.includes('debt')) {
-    setStatus('Aggregating balance sheet debt components...');
+    emitSimulatedStatus('Aggregating balance sheet debt components...');
     await new Promise(r => setTimeout(r, 600));
     if (signal.aborted) return;
 
@@ -688,7 +718,7 @@ async function simulateCopilotResponse(
       },
     ];
   } else {
-    setStatus('Synthesizing credit analysis...');
+    emitSimulatedStatus('Synthesizing credit analysis...');
     await new Promise(r => setTimeout(r, 500));
     if (signal.aborted) return;
 
