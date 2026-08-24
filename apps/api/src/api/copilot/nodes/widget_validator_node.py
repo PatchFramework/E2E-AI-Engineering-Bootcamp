@@ -53,7 +53,7 @@ def validate_widget_node(state: CopilotGraphState) -> Dict[str, Any]:
             "pending_widget": pending,
             "widget_validation_error": None,
             "clean_event_history": new_events,
-            "reasoning_status": "Validated Generative UI chart schema"
+            "reasoning_status": f"Validated generated chart: '{pending.get('title', 'Chart')}'"
         }
     except (ValidationError, ValueError) as err:
         err_msg = str(err)

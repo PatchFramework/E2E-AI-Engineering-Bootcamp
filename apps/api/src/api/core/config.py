@@ -17,8 +17,6 @@ def find_env_file() -> str:
 
 class Config(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
-    OPENAI_MODEL: str = "gpt-4o"
-    COPILOT_LLM_MODEL: str = "gpt-4o"
     
     # LangSmith / LangChain Tracing Configuration
     LANGSMITH_API_KEY: Optional[str] = None
@@ -86,8 +84,6 @@ class Config(BaseSettings):
         if self.OPENAI_API_KEY:
             os.environ["OPENAI_API_KEY"] = self.OPENAI_API_KEY
 
-        os.environ["COPILOT_LLM_MODEL"] = self.COPILOT_LLM_MODEL
-        os.environ["OPENAI_MODEL"] = self.OPENAI_MODEL
 
         return self
 

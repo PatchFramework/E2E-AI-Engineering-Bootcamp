@@ -166,10 +166,13 @@ def _run_data_quality_agent_impl(state: CopilotGraphState, db: Session) -> Dict[
 
     updated_tokens = merge_token_usages(current_token_usage, accumulated_subagent_tokens)
 
+    unverified_cnt = len(quality_results.get("unverified_facts", {}).get("unverified_facts", []))
+    issues_cnt = len(quality_results.get("active_issues", {}).get("issues", []))
+
     return {
         "audit_substate": substate,
         "quality_issues": quality_results,
         "token_usage": updated_tokens,
-        "reasoning_status": f"Data quality audited: {final_summary[:60]}..."
+        "reasoning_status": f"Data quality audited: inspected {unverified_cnt} unverified facts and {issues_cnt} accounting issues"
     }
 

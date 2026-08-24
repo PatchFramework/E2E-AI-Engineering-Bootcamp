@@ -209,11 +209,29 @@ def _run_rag_agent_impl(state: CopilotGraphState, db: Session) -> Dict[str, Any]
 
     updated_tokens = merge_token_usages(current_token_usage, accumulated_subagent_tokens)
 
+    # Verbose reasoning status mentioning exact query searched
+    searched_query = None
+    for th in reversed(tool_history):
+        if th.get("tool_name") == "search_filing_chunks_hybrid":
+            searched_query = th.get("arguments", {}).get("query")
+            break
+        elif th.get("tool_name") == "count_concept_frequency":
+            terms = th.get("arguments", {}).get("terms", [])
+            searched_query = ", ".join(terms[:3]) if terms else None
+            break
+
+    if searched_query:
+        num_chunks = len(rag_chunks.get("search_results", []))
+        reasoning_msg = f'Filing search for "{searched_query}": retrieved {num_chunks} evidence chunks'
+    else:
+        num_chunks = len(rag_chunks.get("search_results", []))
+        reasoning_msg = f'Filing search for "{last_user_msg[:40]}": retrieved {num_chunks} chunks'
+
     return {
         "rag_substate": substate,
         "rag_chunks": rag_chunks,
         "retrieved_sources": new_citations,
         "token_usage": updated_tokens,
-        "reasoning_status": f"Filing evidence retrieved: {final_summary[:60]}..."
+        "reasoning_status": reasoning_msg
     }
 

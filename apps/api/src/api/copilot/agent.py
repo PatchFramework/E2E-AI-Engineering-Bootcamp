@@ -31,8 +31,15 @@ class UnderwritingCopilotService:
                 id=session_id,
                 company_id=company_id,
                 title=user_message[:32] + ("..." if len(user_message) > 32 else ""),
-                created_at=datetime.utcnow()
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
             )
+            self.db.add(chat_session)
+            self.db.commit()
+        else:
+            if chat_session.title.startswith("Conversation") or chat_session.title.startswith("New Conversation"):
+                chat_session.title = user_message[:32] + ("..." if len(user_message) > 32 else "")
+            chat_session.updated_at = datetime.utcnow()
             self.db.add(chat_session)
             self.db.commit()
 
@@ -146,16 +153,52 @@ class UnderwritingCopilotService:
         yield f"event: status\ndata: {json.dumps({'step': 'plan', 'message': 'Analyzing request & underwriting context...'})}\n\n"
 
         try:
-            # 5. Run Graph Workflow (sync execution wrapped in asyncio with LangSmith config)
-            loop = asyncio.get_running_loop()
-            final_state = await loop.run_in_executor(
-                None,
-                lambda: self.graph.invoke(initial_state, config=run_config)
-            )
+            # 5. Run Graph Workflow with Real-time Async SSE Status Streaming
+            graph_nodes = {
+                "orchestrator", "financial_metrics", "agentic_rag",
+                "data_quality", "gen_ui", "widget_validator", "synthesizer"
+            }
+            orchestrator_runs = 0
+            final_state: Optional[Dict[str, Any]] = None
 
-            # Emit intermediate status updates if any
-            if final_state.get("reasoning_status"):
-                yield f"event: status\ndata: {json.dumps({'step': 'process', 'message': final_state['reasoning_status']})}\n\n"
+            async for event in self.graph.astream_events(initial_state, config=run_config, version="v2"):
+                kind = event.get("event")
+                name = event.get("name")
+
+                if name in graph_nodes:
+                    if kind == "on_chain_start":
+                        if name == "synthesizer":
+                            yield f"event: status\ndata: {json.dumps({'step': 'synthesize', 'message': 'Synthesizing institutional credit memo & findings...'})}\n\n"
+                        elif name == "widget_validator":
+                            yield f"event: status\ndata: {json.dumps({'step': 'widget_validator', 'message': 'Validating generated chart ...'})}\n\n"
+                        elif name == "agentic_rag":
+                            yield f"event: status\ndata: {json.dumps({'step': 'agentic_rag', 'message': 'Searching filing documents & disclosures for evidence...'})}\n\n"
+                        elif name == "financial_metrics":
+                            yield f"event: status\ndata: {json.dumps({'step': 'financial_metrics', 'message': 'Calculating credit ratios & financial metrics...'})}\n\n"
+                        elif name == "data_quality":
+                            yield f"event: status\ndata: {json.dumps({'step': 'data_quality', 'message': 'Auditing data quality & unverified facts...'})}\n\n"
+                        elif name == "gen_ui":
+                            yield f"event: status\ndata: {json.dumps({'step': 'gen_ui', 'message': 'Generating financial visualization widget...'})}\n\n"
+                        elif name == "orchestrator":
+                            orchestrator_runs += 1
+                            if orchestrator_runs > 1:
+                                yield f"event: status\ndata: {json.dumps({'step': 'orchestrator', 'message': 'Evaluating subagent findings & coordinating next steps...'})}\n\n"
+
+                    elif kind == "on_chain_end":
+                        output = event.get("data", {}).get("output")
+                        if isinstance(output, dict) and output.get("reasoning_status"):
+                            yield f"event: status\ndata: {json.dumps({'step': name, 'message': output['reasoning_status']})}\n\n"
+
+                elif name == "LangGraph" and kind == "on_chain_end":
+                    final_state = event.get("data", {}).get("output")
+
+            if final_state is None:
+                # Fallback synchronous invocation if stream didn't capture final state
+                loop = asyncio.get_running_loop()
+                final_state = await loop.run_in_executor(
+                    None,
+                    lambda: self.graph.invoke(initial_state, config=run_config)
+                )
 
             # 6. Stream Assistant Content Tokens
             assistant_messages = [m for m in final_state.get("messages", []) if isinstance(m, AIMessage)]
@@ -223,6 +266,12 @@ class UnderwritingCopilotService:
                 created_at=datetime.utcnow()
             )
             self.db.add(assistant_db_msg)
+            
+            session_obj = self.db.query(ChatSession).filter(ChatSession.id == session_id).first()
+            if session_obj:
+                session_obj.updated_at = datetime.utcnow()
+                self.db.add(session_obj)
+
             self.db.commit()
 
             # 10. Done Event with token accounting metadata

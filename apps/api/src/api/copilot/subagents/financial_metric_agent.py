@@ -226,11 +226,25 @@ def _run_financial_metric_agent_impl(state: CopilotGraphState, db: Session) -> D
 
     updated_tokens = merge_token_usages(current_token_usage, accumulated_subagent_tokens)
 
+    # Formulate informative reasoning status
+    resolved_metric = None
+    for th in reversed(tool_history):
+        if "metric_name" in th.get("arguments", {}):
+            resolved_metric = th["arguments"]["metric_name"]
+            break
+
+    if resolved_metric:
+        status_msg = f"Financial metrics resolved: calculated historical trend for '{resolved_metric}'"
+    elif active_metric and active_metric != "None":
+        status_msg = f"Financial metrics resolved for focus metric '{active_metric}'"
+    else:
+        status_msg = f"Financial credit metrics resolved for Company #{company_id}"
+
     return {
         "metric_substate": substate,
         "metric_results": metric_results,
         "retrieved_sources": new_citations,
         "token_usage": updated_tokens,
-        "reasoning_status": f"Financial metrics resolved: {final_summary[:60]}..."
+        "reasoning_status": status_msg
     }
 

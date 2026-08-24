@@ -119,6 +119,9 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"Orchestrator structured planning LLM call failed ({e}); using heuristic fallback plan.")
 
+        if not plan_obj:
+            plan_obj = _generate_heuristic_plan(last_user_msg)
+            logger.info(f"Orchestrator using heuristic plan: {plan_obj.execution_plan}")
 
         # Record Plan Event in Clean History
         new_events.append({
@@ -266,4 +269,49 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
         "clean_event_history": new_events,
         "reasoning_status": f"Proceeding to {next_step}..."
     }
+
+
+def _generate_heuristic_plan(query: str) -> OrchestrationPlan:
+    q = (query or "").lower().strip()
+    # Greetings & simple conversational queries
+    if q in {"hi", "hello", "hey", "help", "good morning", "good afternoon", "who are you"} or len(q) < 5:
+        return OrchestrationPlan(
+            execution_plan=["DIRECT_ANSWER"],
+            reasoning="Direct conversational response without requiring subagent tools.",
+            suggested_focus="General assistant greeting and overview of capabilities.",
+            subagent_tasks={}
+        )
+    
+    plan: list[str] = []
+    tasks: dict[str, str] = {}
+    
+    is_chart = any(k in q for k in ["chart", "plot", "trend", "visualize", "breakdown", "pie", "distribution", "cloud", "word"])
+    is_metric = any(k in q for k in ["metric", "ratio", "leverage", "ebitda", "margin", "coverage", "debt", "revenue", "liquidity", "calculate", "trend"])
+    is_audit = any(k in q for k in ["audit", "verify", "quality", "check", "anomaly", "sanity", "discrepancy"])
+    is_rag = any(k in q for k in ["filing", "10-k", "10-q", "sec", "annual report", "note", "disclosure", "document", "covenant", "risk", "find", "search", "show"]) or not (is_metric or is_chart or is_audit)
+
+    if is_rag:
+        plan.append("FILING_SEARCH")
+        tasks["rag_task"] = f"Search filings and disclosures for: '{query}'"
+    if is_metric:
+        plan.append("METRICS")
+        tasks["metric_task"] = f"Calculate relevant financial metrics for: '{query}'"
+    if is_audit:
+        plan.append("QUALITY_AUDIT")
+        tasks["audit_task"] = f"Audit financial data and verify facts for: '{query}'"
+    if is_chart:
+        plan.append("GEN_UI")
+        tasks["gen_ui_task"] = f"Generate interactive chart/widget for: '{query}'"
+
+    if not plan:
+        plan = ["FILING_SEARCH"]
+        tasks["rag_task"] = f"Search underwriting evidence for: '{query}'"
+
+    return OrchestrationPlan(
+        execution_plan=plan,
+        reasoning=f"Heuristic plan decomposed into: {' -> '.join(plan)} based on query intent.",
+        suggested_focus="Underwriting evidence analysis and credit risk synthesis.",
+        subagent_tasks=tasks
+    )
+
 
