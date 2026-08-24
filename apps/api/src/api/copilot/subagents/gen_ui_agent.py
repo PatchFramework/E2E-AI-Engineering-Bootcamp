@@ -7,10 +7,10 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from api.copilot.state import CopilotGraphState, SubagentSubstate
 from api.copilot.tools.widget_tools import (
-    build_line_chart_spec_impl, build_bar_chart_spec_impl, build_pie_chart_spec_impl, build_word_cloud_spec_impl
+    create_widget_tools, build_line_chart_spec_impl, build_bar_chart_spec_impl, build_pie_chart_spec_impl, build_word_cloud_spec_impl
 )
 from api.copilot.prompts import get_prompt_template, FALLBACK_GEN_UI_PROMPT
-from api.copilot.token_tracker import extract_token_usage, merge_token_usages
+from api.copilot.llm_client import get_chat_openai, get_default_model_name, empty_token_usage, extract_token_usage, merge_token_usages
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +40,10 @@ def run_gen_ui_agent(state: CopilotGraphState) -> Dict[str, Any]:
     validation_error = state.get("widget_validation_error")
     retries = state.get("widget_validation_retries", 0)
 
-    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+    model_name = get_default_model_name()
     openai_key = os.getenv("OPENAI_API_KEY")
-    current_token_usage = state.get("token_usage") or {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
-    accumulated_subagent_tokens = {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
+    current_token_usage = state.get("token_usage") or empty_token_usage()
+    accumulated_subagent_tokens = empty_token_usage()
 
     pending_widget: Optional[Dict[str, Any]] = None
     tool_history: List[Dict[str, Any]] = list(substate.get("tool_call_history") or [])
@@ -55,16 +51,12 @@ def run_gen_ui_agent(state: CopilotGraphState) -> Dict[str, Any]:
     # LLM Forced Tool Execution
     if openai_key:
         try:
-            from langchain_openai import ChatOpenAI
-            from api.copilot.tools.widget_tools import create_widget_tools
-
             widget_tools = create_widget_tools()
             tool_map = {t.name: t for t in widget_tools}
 
-            llm = ChatOpenAI(
-                model=model_name,
+            llm = get_chat_openai(
+                model_name=model_name,
                 temperature=0.1,
-                api_key=openai_key,
                 tags=["gen-ui-agent", model_name]
             )
 

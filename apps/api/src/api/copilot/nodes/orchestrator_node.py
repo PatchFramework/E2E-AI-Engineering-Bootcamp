@@ -7,7 +7,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from api.copilot.state import CopilotGraphState, CleanEvent, SubagentSubstate
 from api.copilot.prompts import get_prompt_template, FALLBACK_ORCHESTRATOR_PROMPT
-from api.copilot.token_tracker import extract_token_usage, merge_token_usages
+from api.copilot.llm_client import get_chat_openai, get_default_model_name, empty_token_usage, extract_token_usage, merge_token_usages
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +41,8 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
     company_name = context_snapshot.get("companyName") or f"Company #{company_id}"
     active_metric = state.get("active_metric") or context_snapshot.get("activeMetric") or "None"
     
-    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
-    current_token_usage = state.get("token_usage") or {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
+    model_name = get_default_model_name()
+    current_token_usage = state.get("token_usage") or empty_token_usage()
     
     clean_history = list(state.get("clean_event_history") or [])
     completed_steps = list(state.get("completed_steps") or [])
@@ -97,19 +95,11 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
 
         if openai_key:
             try:
-                from langchain_openai import ChatOpenAI
-                llm = ChatOpenAI(
-                    model=model_name,
+                llm = get_chat_openai(
+                    model_name=model_name,
                     temperature=0.1,
-                    api_key=openai_key,
                     tags=["orchestrator-planner", model_name],
-                    model_kwargs={
-                        "metadata": {
-                            "ls_model_name": model_name,
-                            "ls_provider": "openai",
-                            "company_id": company_id
-                        }
-                    }
+                    company_id=company_id
                 )
                 structured_llm = llm.with_structured_output(OrchestrationPlan)
                 prompt_tpl = get_prompt_template("copilot-orchestrator", FALLBACK_ORCHESTRATOR_PROMPT)
@@ -125,7 +115,6 @@ def run_orchestrator_node(state: CopilotGraphState) -> Dict[str, Any]:
                 ])
                 if isinstance(resp, OrchestrationPlan):
                     plan_obj = resp
-                    # Estimate / track token usage if available
                     logger.info(f"Orchestrator generated structured plan: {plan_obj.execution_plan}")
             except Exception as e:
                 logger.warning(f"Orchestrator structured planning LLM call failed ({e}); using heuristic fallback plan.")

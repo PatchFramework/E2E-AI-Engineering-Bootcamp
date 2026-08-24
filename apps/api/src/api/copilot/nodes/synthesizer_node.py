@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from api.copilot.state import CopilotGraphState, CleanEvent
 from api.copilot.pruning import is_turn_limit_reached, TURN_LIMIT_WARNING
 from api.copilot.prompts import get_prompt_template, FALLBACK_SYNTHESIS_PROMPT
-from api.copilot.token_tracker import extract_token_usage, merge_token_usages
+from api.copilot.llm_client import get_chat_openai, get_default_model_name, empty_token_usage, extract_token_usage, merge_token_usages
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +23,10 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
     company_id = state.get("company_id", 1)
     context_snapshot = state.get("context_snapshot") or {}
     company_name = context_snapshot.get("companyName") or f"Company #{company_id}"
-    model_name = os.getenv("COPILOT_LLM_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+    model_name = get_default_model_name()
     
-    current_token_usage = state.get("token_usage") or {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
-    synthesizer_tokens = {
-        "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "total_tokens": 0
-    }
+    current_token_usage = state.get("token_usage") or empty_token_usage()
+    synthesizer_tokens = empty_token_usage()
 
     clean_history: List[CleanEvent] = list(state.get("clean_event_history") or [])
     pending_widget = state.get("pending_widget")
@@ -89,19 +85,11 @@ def run_synthesizer_node(state: CopilotGraphState) -> Dict[str, Any]:
 
         if openai_key:
             try:
-                from langchain_openai import ChatOpenAI
-                llm = ChatOpenAI(
-                    model=model_name,
+                llm = get_chat_openai(
+                    model_name=model_name,
                     temperature=0.2,
-                    api_key=openai_key,
                     tags=["synthesizer", model_name],
-                    model_kwargs={
-                        "metadata": {
-                            "ls_model_name": model_name,
-                            "ls_provider": "openai",
-                            "company_id": company_id
-                        }
-                    }
+                    company_id=company_id
                 )
                 system_prompt = get_prompt_template("copilot-synthesizer", FALLBACK_SYNTHESIS_PROMPT)
                 ai_resp = llm.invoke([
